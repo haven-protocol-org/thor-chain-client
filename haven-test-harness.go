@@ -13,43 +13,43 @@ type BlockHeader struct {
 }                     
 
 type GetInfo_Result struct {
-     alt_blocks_count uint
-     block_size_limit uint
-     block_size_median uint
-     block_weight_limit uint
-     block_weight_median uint
-     bootstrap_daemon_address string
-     cumulative_difficulty uint64
-     cumulative_difficulty_top64 uint64
-     database_size uint64
-     difficulty uint64
-     difficulty_top64 uint64
-     free_space uint64
-     grey_peerlist_size uint
-     height uint
-     height_without_bootstrap uint
-     incoming_connections_count uint
-     mainnet bool
-     nettype string
-     offline bool
-     outgoing_connections_count uint
-     rpc_connections_count uint
-     stagenet bool
-     start_time uint
-     status string
-     target uint
-     target_height uint
-     testnet bool
-     top_block_hash string
-     tx_count uint
-     tx_pool_size uint
-     untrusted bool
-     update_available bool
-     version string
-     was_bootstrap_ever_used bool
-     white_peerlist_size uint
-     wide_cumulative_difficulty string
-     wide_difficulty string
+     Alt_Blocks_Count int
+     Bloc_Size_Limit uint
+     Block_Size_Median uint
+     Block_Weight_Limit uint
+     Block_Weight_Median uint
+     Bootstrap_Daemon_Address string
+     Cumulative_Difficulty int
+     Cumulative_Difficulty_Top64 int
+     Database_Size int
+     Difficulty int64
+     Difficulty_Top64 int64
+     Free_Space int64
+     Grey_Peerlist_Size int
+     Height int
+     Height_Without_Bootstrap int
+     Incoming_Connections_Count int
+     Mainnet bool
+     Nettype string
+     Offline bool
+     Outgoing_Connections_Count int
+     Rpc_Connections_Count int
+     Stagenet bool
+     Start_Time int
+     Status string
+     Target int
+     Target_Height int
+     Testnet bool
+     Top_Block_Hash string
+     Tx_Count int
+     Tx_Pool_Size int
+     Untrusted bool
+     Update_Available bool
+     Version string
+     Was_Bootstrap_Ever_Used bool
+     White_Peerlist_Size int
+     Wide_Cumulative_Difficulty string
+     Wide_Difficulty string
 }
 
 type GetVersion_Result struct {
@@ -75,7 +75,7 @@ func GetHeight() {
          rpcerr := jsonrpc2.ServerError(err)
 	 fmt.Printf("Err3(): code=%d msg=%q data=%v reply=%v\n", rpcerr.Code, rpcerr.Message, rpcerr.Data, reply)
      } else {
-         fmt.Printf("Status=%v Height=%d Reply=%v\n", reply.status, reply.height, reply);
+         fmt.Printf("Status=%v Height=%d Reply=%v\n", reply.Status, reply.Height, reply);
      }
 }
 
