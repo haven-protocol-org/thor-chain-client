@@ -58,7 +58,28 @@ type GetVersion_Result struct {
      Version int
 }
 
-func GetHeight() {
+func GetHeight() (error, int) {
+     
+     // Connect to daemon RPC server
+     clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:17750/json_rpc")
+     defer clientHTTP.Close()
+
+     var reply GetInfo_Result
+     var err error
+
+     // Get Height
+     err = clientHTTP.Call("get_info", nil, &reply)
+     if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
+     	 fmt.Printf("Error(): %q\n", err)
+     } else if err != nil {
+         rpcerr := jsonrpc2.ServerError(err)
+	 fmt.Printf("Error(): code=%d msg=%q data=%v reply=%v\n", rpcerr.Code, rpcerr.Message, rpcerr.Data, reply)
+     }
+
+     return err, reply.Height
+}
+
+func GetVersion() (error, string) {
      
      // Connect to daemon RPC server
      clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:17750/json_rpc")
@@ -74,31 +95,28 @@ func GetHeight() {
      } else if err != nil {
          rpcerr := jsonrpc2.ServerError(err)
 	 fmt.Printf("Err3(): code=%d msg=%q data=%v reply=%v\n", rpcerr.Code, rpcerr.Message, rpcerr.Data, reply)
-     } else {
-         fmt.Printf("Status=%v Height=%d Reply=%v\n", reply.Status, reply.Height, reply);
      }
+
+     return err, reply.Version
 }
 
 func main() {
 
-	GetHeight()
+     // Local vars
+     var status error
+     var height int
+     var version string
 
-	// Client use HTTP transport.
-	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:17750/json_rpc")
-	defer clientHTTP.Close()
-
-	var reply GetVersion_Result
-	var err error
-
-	// Synchronous call using named params and HTTP with context.
-	err = clientHTTP.Call("get_version", nil, &reply)
-	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
-		fmt.Printf("Err3(): %q\n", err)
-	} else if err != nil {
-		rpcerr := jsonrpc2.ServerError(err)
-		fmt.Printf("Err3(): code=%d msg=%q data=%v reply=%v\n", rpcerr.Code, rpcerr.Message, rpcerr.Data, reply)
-	} else {
-		fmt.Printf("Status=%v Untrusted=%q Version=%d\n", reply.Status, reply.Untrusted, reply.Version);
-	}
-
+     // Get the height of the chain
+     status, height = GetHeight()
+     if (status != nil) {
+     } else {
+	fmt.Printf("Height = %d\n", height)
+     }
+     
+     status, version = GetVersion()
+     if (status != nil) {
+     } else {
+	fmt.Printf("Version = %s\n", version)
+     }
 }
