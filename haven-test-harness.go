@@ -83,7 +83,11 @@ type BLOCK struct {
 	Tx_Hashes     []string
 }
 
-func GetBlock() {
+type TX struct {
+        Json string
+}
+
+func GetBlock(height int) (error, BLOCK) {
 
 	// Connect to daemon RPC server
 	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:27750/json_rpc")
@@ -93,14 +97,13 @@ func GetBlock() {
 		height int
 	}
 
-	var myreq REQ
-	myreq.height = 5005
+	myreq := map[string]int{"height":height}
 
 	var reply BLOCK
 	var err error
 
 	// Get Height
-	err = clientHTTP.Call("get_block", &myreq, &reply)
+	err = clientHTTP.Call("get_block", myreq, &reply)
 	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
 		fmt.Printf("Error(): %q\n", err)
 	} else if err != nil {
@@ -108,8 +111,41 @@ func GetBlock() {
 		fmt.Printf("Error(): code=%d msg=%q data=%v reply=%v\n", rpcerr.Code, rpcerr.Message, rpcerr.Data, reply)
 	}
 
-	fmt.Printf("RESULT: %d ", reply.Block_Header.Nonce)
+	return err, reply
 }
+/*
+func GetTxes(txes []string) (error, []TX) {
+
+	// Connect to daemon RPC server
+	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:27750/get_transactions")
+	defer clientHTTP.Close()
+
+	type REQ struct {
+	    txs_hashes []string
+	    decode_as_json bool
+	    prune bool
+	}
+
+	var request REQ
+	var reply 
+	var err error
+
+	request.txs_hashes = txes
+	request.decode_as_json = true
+	request.prune = false
+
+	// Get transactions
+	err = clientHTTP.Call("", request, &reply)
+	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
+		fmt.Printf("Error(): %q\n", err)
+	} else if err != nil {
+		rpcerr := jsonrpc2.ServerError(err)
+		fmt.Printf("Error(): code=%d msg=%q data=%v reply=%v\n", rpcerr.Code, rpcerr.Message, rpcerr.Data, reply)
+	}
+
+	return err, reply
+}
+*/
 
 func GetHeight() (error, int) {
 
@@ -156,9 +192,11 @@ func GetVersion() (error, string) {
 func main() {
 
 	// Local vars
-	// var status error
+	var status error
 	// var height int
 	// var version string
+	var blk BLOCK
+	//var txes []string
 
 	// Get the height of the chain
 	// status, height = GetHeight()
@@ -173,5 +211,15 @@ func main() {
 	// fmt.Printf("Version = %s\n", version)
 	// }
 
-	GetBlock()
+	status, blk = GetBlock(5005)
+	if (status != nil) {
+	    return
+	}
+
+	fmt.Printf("Block = %s\n", blk.Json)
+/*
+	if (len(blk.Tx_Hashes) > 0) {
+	    status, []txes = GetTxes(blk.Tx_Hashes)
+	}
+*/
 }
