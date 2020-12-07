@@ -3,7 +3,9 @@ package haven
 import (
 	"fmt"
 
-	"github.com/btcsuite/btcd/btcec" // TODO: must be removed
+	"github.com/btcsuite/btcd/btcec" // TODO: btc imports must be updated with haven imports
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcutil"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	tssp "gitlab.com/thorchain/tss/go-tss/tss"
@@ -130,6 +132,73 @@ func (c *Client) GetAddress(poolPubKey common.PubKey) string {
 // GetAccountByAddress return empty account for now
 func (c *Client) GetAccountByAddress(address string) (common.Account, error) {
 	return common.Account{}, nil
+}
+
+// GetAccount returns account with balance for an address
+func (c *Client) GetAccount(pkey common.PubKey) (common.Account, error) {
+
+	// make a new account instance to return in case of an error
+	acct := common.Account{}
+
+	// get all block metas
+	blockMetas, err := c.blockMetaAccessor.GetBlockMetas()
+	if err != nil {
+		return acct, fmt.Errorf("fail to get block meta: %w", err)
+	}
+
+	// calculate total spendable amount in all blocks
+	total := 0.0
+	for _, item := range blockMetas {
+		for _, utxo := range item.GetUTXOs(pkey) {
+			total += utxo.Value
+		}
+	}
+	totalAmt, err := btcutil.NewAmount(total) // TODO: must be haven amount type
+	if err != nil {
+		return acct, fmt.Errorf("fail to convert total amount: %w", err)
+	}
+
+	// return a new Account with the total amount spendable.
+	//TODO: 0,0 in the beginng???
+	return common.NewAccount(0, 0, common.AccountCoins{
+		common.AccountCoin{
+			Amount: uint64(totalAmt),
+			Denom:  common.BTCAsset.String(), // TODO: common.XHVAsset.String()
+		},
+	}, false), nil
+}
+
+// OnObservedTxIn gets called from observer when we have a valid observation
+// For bitcoin chain client we want to save the utxo we can spend later to sign
+func (c *Client) OnObservedTxIn(txIn types.TxInItem, blockHeight int64) {
+
+	// convert TxID to btc hash type
+	hash, err := chainhash.NewHashFromStr(txIn.Tx) // TODO: make a haven hash type if necessary
+	if err != nil {
+		c.logger.Error().Err(err).Str("txID", txIn.Tx).Msg("fail to add spendable utxo to storage")
+		return
+	}
+
+	// NOTE: The fact that we are calling GetCoin function must mean that each txIn can have multiple asset types.
+	// because some chains have multiple assets in the same chain.
+	value := float64(txIn.Coins.GetCoin(common.BTCAsset).Amount.Uint64()) / common.One
+
+	// get the block meta for this height
+	blockMeta, err := c.blockMetaAccessor.GetBlockMeta(blockHeight)
+	if nil != err {
+		c.logger.Err(err).Msgf("fail to get block meta on block height(%d)", blockHeight)
+	}
+	if nil == blockMeta {
+		c.logger.Error().Msgf("can't get block meta for height: %d", blockHeight)
+		return
+	}
+
+	// create a new unspent transaction output and save to the block it belongs to.
+	utxo := NewUnspentTransactionOutput(*hash, 0, value, blockHeight, txIn.ObservedVaultPubKey)
+	blockMeta.AddUTXO(utxo)
+	if err := c.blockMetaAccessor.SaveBlockMeta(blockHeight, blockMeta); err != nil {
+		c.logger.Err(err).Msgf("fail to save block meta to storage,block height(%d)", blockHeight)
+	}
 }
 
 // FetchTxs retrieves txs for a block height
