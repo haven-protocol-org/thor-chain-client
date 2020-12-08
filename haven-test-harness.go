@@ -85,22 +85,92 @@ type BLOCK struct {
 	Tx_Hashes     []string
 }
 
-type key struct {
+type vin_key struct {
 	Amount      int64
 	Key_Offsets []int64
 	K_Image     string
 }
 
-type Vin_Arr struct {
-	Key      key
-	Onshore  key
-	Offshore key
+type vin_entry struct {
+	Key      vin_key
+	Onshore  vin_key
+	Offshore vin_key
 }
 
-type TX struct {
+type vout_key struct {
+     	Key	 string
+	Offshore string
+}
+
+type vout_entry struct {
+     	Amount	int64
+	Target	vout_key
+}
+
+type RCT_SIGNATURES struct {
+        Type			int
+	TxnFee			int64
+	TxnFee_Usd		int64
+	TxnOffshoreFee		int64
+	TxnOffshoreFee_Usd 	int64
+	EcdhInfo		[]map[string]string
+	OutPk			[]string
+	OutPk_Usd		[]string
+}
+
+type RAW_TX struct {
 	Version     int
 	Unlock_Time int
-	Vin         []Vin_Arr
+	Vin         []vin_entry
+	Vout	    []vout_entry
+	Extra	    []byte
+	Rct_Signatures	RCT_SIGNATURES
+}
+
+type ByteArray []byte
+
+func ParseTxExtra(extra []byte) (error, map[int][]ByteArray) {
+
+     	var parsedTxExtra map[int][]ByteArray
+
+	for ind := 0; ind < len(extra); ind++ {
+
+	    // Check that the map entry exists and is initialised
+	    if parsedTxExtra[int(extra[ind])] == nil {
+	       parsedTxExtra[int(extra[ind])] = []ByteArray{}
+	    }
+
+	    if extra[ind] == 0 {
+	       // Padding
+	    } else if extra[ind] == 1 {
+	       // Pubkey - 32 byte key (fixed length)
+	       var ba ByteArray
+	       ba = extra[ind+1:ind+33]
+	       parsedTxExtra[1] = append(parsedTxExtra[1], ba)
+	       ind += 32
+	    } else if extra[ind] == 2 {
+	       // Nonce
+	    } else if extra[ind] == 3 {
+	       // Merge mining key
+	    } else if extra[ind] == 4 {
+	       // Additional pubkeys
+	    } else if extra[ind] == 0x17 {
+	       // Offshore data
+	       var ba ByteArray
+	       var len int
+	       len = int(extra[ind+1])
+	       ba = extra[ind+2:ind+2+len]
+	       parsedTxExtra[0x17] = append(parsedTxExtra[0x17], ba)
+	       ind += len+1
+	    } else {
+	    }
+	}
+
+	var err error
+
+	fmt.Printf("found %d tag types in TX extra\n", len(parsedTxExtra))
+
+	return err, parsedTxExtra
 }
 
 func GetBlock(height int) (error, BLOCK) {
@@ -126,7 +196,7 @@ func GetBlock(height int) (error, BLOCK) {
 	return err, reply
 }
 
-func GetTxes(txes []string) {
+func GetTxes(txes []string) (error, []RAW_TX) {
 
 	requestBody, err := json.Marshal(map[string]interface{}{"txs_hashes": txes, "decode_as_json": true})
 	if err != nil {
@@ -149,18 +219,21 @@ func GetTxes(txes []string) {
 		Txs_As_Json []string
 	}
 
-	var myres GET_TX_RESULT
+	var txResult GET_TX_RESULT
 
-	json.Unmarshal(body, &myres)
+	//fmt.Printf("Body = %s\n", body);
 
-	// var myTxs []TX
+	json.Unmarshal(body, &txResult)
 
-	for ind, tx := range myres.Txs_As_Json {
-		var mytx TX
-		json.Unmarshal([]byte(tx), &mytx)
+	var rawTxs []RAW_TX
+
+	for _, jsonTx := range txResult.Txs_As_Json {
+		var rawTx RAW_TX
+		json.Unmarshal([]byte(jsonTx), &rawTx)
+		rawTxs = append(rawTxs, rawTx)
 	}
 
-	fmt.Printf("TXS: %s", myres.Txs_As_Json[3])
+	return err, rawTxs
 }
 
 func GetHeight() (error, int) {
@@ -212,7 +285,7 @@ func main() {
 	// var height int
 	// var version string
 	var blk BLOCK
-	//var txes []string
+	var rawTxes []RAW_TX
 
 	// Get the height of the chain
 	// status, height = GetHeight()
@@ -232,12 +305,30 @@ func main() {
 		return
 	}
 
-	GetTxes(blk.Tx_Hashes)
+	status, rawTxes = GetTxes(blk.Tx_Hashes)
 
-	// fmt.Printf("Block = %s\n", blk.Json)
-	/*
-		if (len(blk.Tx_Hashes) > 0) {
-		    status, []txes = GetTxes(blk.Tx_Hashes)
+	for _, rawTx := range rawTxes {
+
+	    //var ParsedTxExtra map[int][]ByteArray 
+
+	    ParseTxExtra(rawTx.Extra)
+
+	    // Debug print statements to verify access to the required fields
+	    fmt.Printf("TX version = %d\n", rawTx.Version)
+	    fmt.Printf("TX XHV fee = %d, USD fee = %d\n", rawTx.Rct_Signatures.TxnFee, rawTx.Rct_Signatures.TxnFee_Usd)
+	    fmt.Printf("TX ecdhinfo = %s\n", rawTx.Rct_Signatures.EcdhInfo[0]["amount"])
+
+	    // Read the TX vout array to find the correct one-time keys for outputs
+	    for _, vout := range rawTx.Vout {
+	    	if len(vout.Target.Offshore) != 0 {
+		    fmt.Printf("vout target offshore = %s\n", vout.Target.Offshore)
+		} else {
+		    fmt.Printf("vout target key = %s\n", vout.Target.Key)
 		}
-	*/
+	    }
+	    
+	    // Parse the TX extra field for this TX to obtain tx_key
+
+	    // Decode the ECDHINFO blocks to get the amounts
+	}
 }
