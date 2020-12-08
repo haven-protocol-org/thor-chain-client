@@ -85,8 +85,22 @@ type BLOCK struct {
 	Tx_Hashes     []string
 }
 
+type key struct {
+	Amount      int64
+	Key_Offsets []int64
+	K_Image     string
+}
+
+type Vin_Arr struct {
+	Key      key
+	Onshore  key
+	Offshore key
+}
+
 type TX struct {
-	Txs_As_Json []string
+	Version     int
+	Unlock_Time int
+	Vin         []Vin_Arr
 }
 
 func GetBlock(height int) (error, BLOCK) {
@@ -130,7 +144,23 @@ func GetTxes(txes []string) {
 		fmt.Printf("Read Error: %q\n", err)
 	}
 
-	fmt.Printf("Body: %s", body)
+	type GET_TX_RESULT struct {
+		Status      string
+		Txs_As_Json []string
+	}
+
+	var myres GET_TX_RESULT
+
+	json.Unmarshal(body, &myres)
+
+	// var myTxs []TX
+
+	for ind, tx := range myres.Txs_As_Json {
+		var mytx TX
+		json.Unmarshal([]byte(tx), &mytx)
+	}
+
+	fmt.Printf("TXS: %s", myres.Txs_As_Json[3])
 }
 
 func GetHeight() (error, int) {
