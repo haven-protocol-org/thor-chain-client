@@ -2,11 +2,13 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
+	"net/http"
 	"net/rpc"
-
-	// "encoding/json"
 
 	"github.com/powerman/rpc-codec/jsonrpc2"
 )
@@ -84,7 +86,7 @@ type BLOCK struct {
 }
 
 type TX struct {
-        Json string
+	Txs_As_Json []string
 }
 
 func GetBlock(height int) (error, BLOCK) {
@@ -93,17 +95,13 @@ func GetBlock(height int) (error, BLOCK) {
 	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:27750/json_rpc")
 	defer clientHTTP.Close()
 
-	type REQ struct {
-		height int
-	}
-
-	myreq := map[string]int{"height":height}
+	req := map[string]int{"height": height}
 
 	var reply BLOCK
 	var err error
 
 	// Get Height
-	err = clientHTTP.Call("get_block", myreq, &reply)
+	err = clientHTTP.Call("get_block", req, &reply)
 	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
 		fmt.Printf("Error(): %q\n", err)
 	} else if err != nil {
@@ -113,39 +111,27 @@ func GetBlock(height int) (error, BLOCK) {
 
 	return err, reply
 }
-/*
-func GetTxes(txes []string) (error, []TX) {
 
-	// Connect to daemon RPC server
-	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:27750/get_transactions")
-	defer clientHTTP.Close()
+func GetTxes(txes []string) {
 
-	type REQ struct {
-	    txs_hashes []string
-	    decode_as_json bool
-	    prune bool
+	requestBody, err := json.Marshal(map[string]interface{}{"txs_hashes": txes, "decode_as_json": true})
+	if err != nil {
+		fmt.Printf("Marshaling Error: %q\n", err)
 	}
 
-	var request REQ
-	var reply 
-	var err error
+	resp, err := http.Post("http://127.0.0.1:27750/get_transactions", "application/json", bytes.NewBuffer(requestBody))
+	if err != nil {
+		fmt.Printf("Http Error: %q\n", err)
+	}
+	defer resp.Body.Close()
 
-	request.txs_hashes = txes
-	request.decode_as_json = true
-	request.prune = false
-
-	// Get transactions
-	err = clientHTTP.Call("", request, &reply)
-	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
-		fmt.Printf("Error(): %q\n", err)
-	} else if err != nil {
-		rpcerr := jsonrpc2.ServerError(err)
-		fmt.Printf("Error(): code=%d msg=%q data=%v reply=%v\n", rpcerr.Code, rpcerr.Message, rpcerr.Data, reply)
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("Read Error: %q\n", err)
 	}
 
-	return err, reply
+	fmt.Printf("Body: %s", body)
 }
-*/
 
 func GetHeight() (error, int) {
 
@@ -212,14 +198,16 @@ func main() {
 	// }
 
 	status, blk = GetBlock(5005)
-	if (status != nil) {
-	    return
+	if status != nil {
+		return
 	}
 
-	fmt.Printf("Block = %s\n", blk.Json)
-/*
-	if (len(blk.Tx_Hashes) > 0) {
-	    status, []txes = GetTxes(blk.Tx_Hashes)
-	}
-*/
+	GetTxes(blk.Tx_Hashes)
+
+	// fmt.Printf("Block = %s\n", blk.Json)
+	/*
+		if (len(blk.Tx_Hashes) > 0) {
+		    status, []txes = GetTxes(blk.Tx_Hashes)
+		}
+	*/
 }
