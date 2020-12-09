@@ -10,7 +10,10 @@ import (
 	"net/http"
 	"net/rpc"
 
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/powerman/rpc-codec/jsonrpc2"
+	"golang.org/x/crypto/curve25519"
 )
 
 type GetInfo_Result struct {
@@ -98,77 +101,67 @@ type vin_entry struct {
 }
 
 type vout_key struct {
-     	Key	 string
+	Key      string
 	Offshore string
 }
 
 type vout_entry struct {
-     	Amount	int64
-	Target	vout_key
+	Amount int64
+	Target vout_key
 }
 
 type RCT_SIGNATURES struct {
-        Type			int
-	TxnFee			int64
-	TxnFee_Usd		int64
-	TxnOffshoreFee		int64
-	TxnOffshoreFee_Usd 	int64
-	EcdhInfo		[]map[string]string
-	OutPk			[]string
-	OutPk_Usd		[]string
+	Type               int
+	TxnFee             int64
+	TxnFee_Usd         int64
+	TxnOffshoreFee     int64
+	TxnOffshoreFee_Usd int64
+	EcdhInfo           []map[string]string
+	OutPk              []string
+	OutPk_Usd          []string
 }
 
 type RAW_TX struct {
-	Version     int
-	Unlock_Time int
-	Vin         []vin_entry
-	Vout	    []vout_entry
-	Extra	    []byte
-	Rct_Signatures	RCT_SIGNATURES
+	Version        int
+	Unlock_Time    int
+	Vin            []vin_entry
+	Vout           []vout_entry
+	Extra          []byte
+	Rct_Signatures RCT_SIGNATURES
 }
 
-type ByteArray []byte
+func ParseTxExtra(extra []byte) (error, map[byte][][]byte) {
 
-func ParseTxExtra(extra []byte) (error, map[int][]ByteArray) {
-
-     	var parsedTxExtra map[int][]ByteArray
+	var parsedTxExtra = make(map[byte][][]byte)
 
 	for ind := 0; ind < len(extra); ind++ {
 
-	    // Check that the map entry exists and is initialised
-	    if parsedTxExtra[int(extra[ind])] == nil {
-	       parsedTxExtra[int(extra[ind])] = []ByteArray{}
-	    }
-
-	    if extra[ind] == 0 {
-	       // Padding
-	    } else if extra[ind] == 1 {
-	       // Pubkey - 32 byte key (fixed length)
-	       var ba ByteArray
-	       ba = extra[ind+1:ind+33]
-	       parsedTxExtra[1] = append(parsedTxExtra[1], ba)
-	       ind += 32
-	    } else if extra[ind] == 2 {
-	       // Nonce
-	    } else if extra[ind] == 3 {
-	       // Merge mining key
-	    } else if extra[ind] == 4 {
-	       // Additional pubkeys
-	    } else if extra[ind] == 0x17 {
-	       // Offshore data
-	       var ba ByteArray
-	       var len int
-	       len = int(extra[ind+1])
-	       ba = extra[ind+2:ind+2+len]
-	       parsedTxExtra[0x17] = append(parsedTxExtra[0x17], ba)
-	       ind += len+1
-	    } else {
-	    }
+		if extra[ind] == 0 {
+			// Padding
+		} else if extra[ind] == 0x01 {
+			// Pubkey - 32 byte key (fixed length)
+			var ba = make([]byte, 32)
+			ba = extra[ind+1 : ind+33]
+			parsedTxExtra[0x01] = append(parsedTxExtra[0x01], ba)
+			ind += 32
+		} else if extra[ind] == 2 {
+			// Nonce
+		} else if extra[ind] == 3 {
+			// Merge mining key
+		} else if extra[ind] == 4 {
+			// Additional pubkeys
+		} else if extra[ind] == 0x17 {
+			// Offshore data
+			var len = int(extra[ind+1])
+			var ba = make([]byte, len)
+			ba = extra[ind+2 : ind+2+len]
+			parsedTxExtra[0x17] = append(parsedTxExtra[0x17], ba)
+			ind += len
+		} else {
+		}
 	}
 
 	var err error
-
-	fmt.Printf("found %d tag types in TX extra\n", len(parsedTxExtra))
 
 	return err, parsedTxExtra
 }
@@ -220,13 +213,12 @@ func GetTxes(txes []string) (error, []RAW_TX) {
 	}
 
 	var txResult GET_TX_RESULT
-
-	//fmt.Printf("Body = %s\n", body);
-
-	json.Unmarshal(body, &txResult)
-
 	var rawTxs []RAW_TX
 
+	// parse the returned resutl
+	json.Unmarshal(body, &txResult)
+
+	// parse each tx in the result and save
 	for _, jsonTx := range txResult.Txs_As_Json {
 		var rawTx RAW_TX
 		json.Unmarshal([]byte(jsonTx), &rawTx)
@@ -278,6 +270,47 @@ func GetVersion() (error, string) {
 	return err, reply.Version
 }
 
+func hashToScalar(data []byte) common.Hash {
+	return crypto.Keccak256Hash(data)
+	// var reducedHash [32]byte
+	// edwards25519.ScReduce(&reducedHash, &([64]byte(hash)))
+}
+
+func ecdhHash(sharedSecret []byte) common.Hash {
+	var data []byte
+	data = []byte("amount")
+	data = append(data, sharedSecret...)
+	return hashToScalar(data)
+}
+
+func genCommitmentMask(sharedSecret []byte) common.Hash {
+	var data []byte
+	data = []byte("commitment_mask")
+	data = append(data, sharedSecret...)
+	return hashToScalar(data)
+}
+
+func xor8(keyV []byte, keyK []byte) {
+	for ind := 0; ind < 8; ind++ {
+		keyV[ind] ^= keyK[ind]
+	}
+}
+
+func generateKeyDerivation(key1 []byte, key2 []byte) []byte {
+	derivation, err := curve25519.X25519(key1, key2)
+	if err != nil {
+		// do nothing
+	}
+	return derivation
+}
+
+func ecdhDecode(ecdhInfo map[string]string, sharedSecret []byte) {
+	var mask = genCommitmentMask(sharedSecret)
+	fmt.Printf("mask: %x\n", mask)
+	xor8([]byte(ecdhInfo["amount"]), ecdhHash(sharedSecret).Bytes())
+	fmt.Printf("amount: %x\n", ecdhInfo["amount"])
+}
+
 func main() {
 
 	// Local vars
@@ -309,26 +342,29 @@ func main() {
 
 	for _, rawTx := range rawTxes {
 
-	    //var ParsedTxExtra map[int][]ByteArray 
-
-	    ParseTxExtra(rawTx.Extra)
-
-	    // Debug print statements to verify access to the required fields
-	    fmt.Printf("TX version = %d\n", rawTx.Version)
-	    fmt.Printf("TX XHV fee = %d, USD fee = %d\n", rawTx.Rct_Signatures.TxnFee, rawTx.Rct_Signatures.TxnFee_Usd)
-	    fmt.Printf("TX ecdhinfo = %s\n", rawTx.Rct_Signatures.EcdhInfo[0]["amount"])
-
-	    // Read the TX vout array to find the correct one-time keys for outputs
-	    for _, vout := range rawTx.Vout {
-	    	if len(vout.Target.Offshore) != 0 {
-		    fmt.Printf("vout target offshore = %s\n", vout.Target.Offshore)
-		} else {
-		    fmt.Printf("vout target key = %s\n", vout.Target.Key)
+		var status, parsedTxExtra = ParseTxExtra(rawTx.Extra)
+		if status != nil {
+			fmt.Printf("Error: %q\n", status)
 		}
-	    }
-	    
-	    // Parse the TX extra field for this TX to obtain tx_key
 
-	    // Decode the ECDHINFO blocks to get the amounts
+		// Debug print statements to verify access to the required fields
+		// fmt.Printf("TX version = %d\n", rawTx.Version)
+		// fmt.Printf("TX XHV fee = %d, USD fee = %d\n", rawTx.Rct_Signatures.TxnFee, rawTx.Rct_Signatures.TxnFee_Usd)
+		fmt.Printf("TX ecdhinfo = %q\n", rawTx.Rct_Signatures.EcdhInfo)
+
+		var viewKey = "67196f0bb28a661933e5d8bffe13d063b57be21323ce84e844c800878b5d9102"
+		var txPubKey = parsedTxExtra[1][0]
+		ecdhDecode(rawTx.Rct_Signatures.EcdhInfo[0], generateKeyDerivation([]byte(viewKey), txPubKey))
+		fmt.Printf("--------\n")
+		// Read the TX vout array to find the correct one-time keys for outputs
+		// for _, vout := range rawTx.Vout {
+		// 	if len(vout.Target.Offshore) != 0 {
+		// 		fmt.Printf("vout target offshore = %s\n", vout.Target.Offshore)
+		// 	} else {
+		// 		fmt.Printf("vout target key = %s\n", vout.Target.Key)
+		// 	}
+		// }
+
+		// Decode the ECDHINFO blocks to get the amounts
 	}
 }
