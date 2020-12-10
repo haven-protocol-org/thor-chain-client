@@ -1,31 +1,28 @@
-package monero
+package crypto
 
 import (
 	"fmt"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/patcito/monero/crypto"
 	"golang.org/x/crypto/curve25519"
 )
 
-func hashToScalar(data []byte) common.Hash {
-	return crypto.Keccak256Hash(data)
-	// var reducedHash [32]byte
-	// edwards25519.ScReduce(&reducedHash, &([64]byte(hash)))
-}
-
-func ecdhHash(sharedSecret []byte) common.Hash {
+func ecdhHash(sharedSecret []byte) [32]byte {
 	var data []byte
 	data = []byte("amount")
 	data = append(data, sharedSecret...)
-	return hashToScalar(data)
+	var result [32]byte
+	crypto.hashToScalar(&result, data)
+	return result
 }
 
-func genCommitmentMask(sharedSecret []byte) common.Hash {
+func genCommitmentMask(sharedSecret []byte) [32]byte {
 	var data []byte
 	data = []byte("commitment_mask")
 	data = append(data, sharedSecret...)
-	return hashToScalar(data)
+	var result [32]byte
+	crypto.hashToScalar(&result, data)
+	return result
 }
 
 func xor8(keyV []byte, keyK []byte) {
@@ -34,17 +31,9 @@ func xor8(keyV []byte, keyK []byte) {
 	}
 }
 
-func generateKeyDerivation(key1 []byte, key2 []byte) []byte {
-	derivation, err := curve25519.X25519(key1, key2)
-	if err != nil {
-		// do nothing
-	}
-	return derivation
-}
-
 func ecdhDecode(ecdhInfo map[string]string, sharedSecret []byte) {
 	var mask = genCommitmentMask(sharedSecret)
 	fmt.Printf("mask: %x\n", mask)
-	xor8([]byte(ecdhInfo["amount"]), ecdhHash(sharedSecret).Bytes())
+	xor8([]byte(ecdhInfo["amount"]), ecdhHash(sharedSecret))
 	fmt.Printf("amount: %x", ecdhInfo["amount"])
 }
