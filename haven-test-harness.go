@@ -3,13 +3,14 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"io/ioutil"
 	"net/http"
 	"net/rpc"
-	"github.com/patcito/monero/crypto"
+	"github.com/haven-protocol-org/monero-go-utils/crypto"
 	"github.com/powerman/rpc-codec/jsonrpc2"
 )
 
@@ -98,8 +99,8 @@ type vin_entry struct {
 }
 
 type vout_key struct {
-	Key      [32]byte
-	Offshore [32]byte
+	Key      string
+	Offshore string
 }
 
 type vout_entry struct {
@@ -113,7 +114,7 @@ type RCT_SIGNATURES struct {
 	TxnFee_Usd         int64
 	TxnOffshoreFee     int64
 	TxnOffshoreFee_Usd int64
-	EcdhInfo           []map[string]string
+	EcdhInfo           []map[string][]byte
 	OutPk              []string
 	OutPk_Usd          []string
 }
@@ -274,46 +275,6 @@ func GetVersion() (error, string) {
 	return err, reply.Version
 }
 
-func hashToScalar(s *[32]byte, b []byte) {
-	h := NewHash()
-	h.Write(b)
-	digest := make([]byte, 64)
-	h.Sum(digest[:0])
-
-	scReduce(s[:], digest)
-}
-
-func ecdhHash(sharedSecret []byte) [32]byte {
-	var data []byte
-	data = []byte("amount")
-	data = append(data, sharedSecret...)
-	var result [32]byte
-	hashToScalar(&result, data)
-	return result
-}
-
-func genCommitmentMask(sharedSecret []byte) [32]byte {
-	var data []byte
-	data = []byte("commitment_mask")
-	data = append(data, sharedSecret...)
-	var result [32]byte
-	hashToScalar(&result, data)
-	return result
-}
-
-func xor8(keyV []byte, keyK []byte) {
-	for ind := 0; ind < 8; ind++ {
-		keyV[ind] ^= keyK[ind]
-	}
-}
-
-func ecdhDecode(ecdhInfo map[string]string, sharedSecret []byte) {
-	var mask = genCommitmentMask(sharedSecret)
-	fmt.Printf("mask: %x\n", mask)
-	xor8([]byte(ecdhInfo["amount"]), ecdhHash(sharedSecret))
-	fmt.Printf("amount: %x", ecdhInfo["amount"])
-}
-
 func main() {
 
 	// Local vars
@@ -343,7 +304,14 @@ func main() {
 
 	status, rawTxes = GetTxes(blk.Tx_Hashes)
 
-	for ind, rawTx := range rawTxes {
+	viewKeyRaw,_ := hex.DecodeString("67196f0bb28a661933e5d8bffe13d063b57be21323ce84e844c800878b5d9102")
+	var viewKey [32]byte
+	copy(viewKey[:], viewKeyRaw[0:32])
+	publicSpendKeyRaw,_ := hex.DecodeString("5d33ee523d3f304d2e1892f57bc7f96761cf892ef98fc1ddd3e4763bc0e6e13c")
+	var publicSpendKey [32]byte
+	copy(publicSpendKey[:], publicSpendKeyRaw[0:32])
+
+	for _, rawTx := range rawTxes {
 
 		var status, parsedTxExtra = ParseTxExtra(rawTx.Extra)
 		if status != nil {
@@ -352,22 +320,26 @@ func main() {
 
 		// Debug print statements to verify access to the required fields
 		// fmt.Printf("TX version = %d\n", rawTx.Version)
-		// fmt.Printf("TX XHV fee = %d, USD fee = %d\n", rawTx.Rct_Signatures.TxnFee, rawTx.Rct_Signatures.TxnFee_Usd)
-		fmt.Printf("TX ecdhinfo = %q\n", rawTx.Rct_Signatures.EcdhInfo)
+		//fmt.Printf("TX XHV fee = %d, USD fee = %d\n", rawTx.Rct_Signatures.TxnFee, rawTx.Rct_Signatures.TxnFee_Usd)
+		//fmt.Printf("TX ecdhinfo = %q\n", rawTx.Rct_Signatures.EcdhInfo)
 
-		var viewKey = "67196f0bb28a661933e5d8bffe13d063b57be21323ce84e844c800878b5d9102"
-		var publicSpendKey = "5d33ee523d3f304d2e1892f57bc7f96761cf892ef98fc1ddd3e4763bc0e6e13c"
-		var txPubKey = parsedTxExtra[1][0]
+		var txPubKey [32]byte
+		copy(txPubKey[:], parsedTxExtra[1][0][0:32])
+		fmt.Printf("tx public key = %x\n", txPubKey)
 		
-		sharedSecret, status := crypto.generateKeyDerivation(txPubKey, []byte(viewKey))
+		sharedSecret, status := crypto.GenerateKeyDerivation(&txPubKey, &viewKey)
 		if status != nil {
 			fmt.Printf("Error: %q\n", status)
 			continue
 		}
+		var derivation = make([]byte, len(*sharedSecret)) 
+ 		copy(derivation, sharedSecret[:])
+
+		//fmt.Printf("RawTX = %q\n", rawTx)
 
 		for ind, vout := range rawTx.Vout {
 
-			derivedTarget, status := crypto.derivePublicKey(sharedSecret, ind, publicSpendKey)
+		    	derivedTarget, status := crypto.DerivePublicKey(derivation, uint64(ind), &publicSpendKey)
 			if status != nil {
 				fmt.Printf("Error: %q\n", status)
 				continue
@@ -375,19 +347,29 @@ func main() {
 			
 			found := false
 			if len(vout.Target.Key) != 0 {
-				if derivedTarget == vout.Target.Key {
+			   	var key,_ = hex.DecodeString(vout.Target.Key)
+				var keyNew [32]byte
+				copy(keyNew[:], key[0:32])
+				fmt.Printf("vout = %x\n", key)
+				if *derivedTarget == keyNew {
 					found = true
 				}
 			} else {
-				if derivedTarget == vout.Target.Offshore {
+			   	var key,_ = hex.DecodeString(vout.Target.Offshore)
+				var keyNew [32]byte
+				copy(keyNew[:], key[0:32])
+				fmt.Printf("vout = %x\n", key)
+				if *derivedTarget == keyNew {
 					found = true
 				}
 			}
 
+			fmt.Printf("derived target = %x\n", *derivedTarget)
+
 			if found {
 				// decode the amount
 				fmt.Printf("We are the reciver. Trying to decode the amount.. %d\n", ind)
-				ecdhDecode()
+				//EcdhDecode()
 			}else{
 				
 			}
@@ -397,8 +379,6 @@ func main() {
 		}
 
 		
-
-		ecdhDecode(rawTx.Rct_Signatures.EcdhInfo[0], )
 		fmt.Printf("--------\n")
 		// Read the TX vout array to find the correct one-time keys for outputs
 		// for _, vout := range rawTx.Vout {
