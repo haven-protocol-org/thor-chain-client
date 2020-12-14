@@ -436,6 +436,13 @@ func (c *Client) parseTxExtra(extra []byte) (map[byte][][]byte, error) {
 			ba = extra[ind+2 : ind+2+len]
 			parsedTxExtra[0x17] = append(parsedTxExtra[0x17], ba)
 			ind += len
+		} else if extra[ind] == 0x18 {
+		        // Thorchain data
+			var len = int(extra[ind+1])
+			var ba = make([]byte, len)
+			ba = extra[ind+2 : ind+2+len]
+			parsedTxExtra[0x18] = append(parsedTxExtra[0x18], ba)
+			ind += len
 		} else {
 		}
 	}
