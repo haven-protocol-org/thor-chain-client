@@ -109,7 +109,7 @@ type RctSignatures struct {
 	TxnFee_Usd         int64
 	TxnOffshoreFee     int64
 	TxnOffshoreFee_Usd int64
-	EcdhInfo           []map[string][]byte
+	EcdhInfo           []map[string]string
 	OutPk              []string
 	OutPk_Usd          []string
 }
@@ -277,7 +277,8 @@ func h2d(key [32]byte) uint64 {
 	var val uint64 = 0
 	var j int = 0
 	for j = 7; j >= 0; j-- {
-		val = uint64(val*256 + uint64(key[j]))
+	  val *= 256
+	  val += uint64(uint8(key[j]))
 	}
 	return val
 }
@@ -349,9 +350,10 @@ func main() {
 
 			if found {
 				// decode the tx amount
-				fmt.Printf("We are the reciver. Trying to decode the amount.. %d\n", ind)
-				ecdhInfo := crypto.EcdhDecode(rawTx.Rct_Signatures.EcdhInfo[ind], *sharedSecret)
-				fmt.Printf("MAsk: %x \n  Amount: %d \n", ecdhInfo.Mask, h2d(ecdhInfo.Amount))
+				fmt.Printf("We are the receiver. Trying to decode the amount (index = %d)\n", ind)
+				scalar := crypto.DerivationToScalar(sharedSecret[:], uint64(ind));
+				ecdhInfo := crypto.EcdhDecode(rawTx.Rct_Signatures.EcdhInfo[ind], *scalar)
+				fmt.Printf("Mask: %x \n  Amount: %d \n", ecdhInfo.Mask, crypto.H2d(ecdhInfo.Amount))
 
 				// TODO: check if the provided commitment is correct
 			} else {
