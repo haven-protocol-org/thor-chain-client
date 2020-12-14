@@ -354,13 +354,22 @@ func main() {
 				scalar := crypto.DerivationToScalar(sharedSecret[:], uint64(ind));
 				ecdhInfo := crypto.EcdhDecode(rawTx.Rct_Signatures.EcdhInfo[ind], *scalar)
 				//rct::addKeys2(Ctmp, ecdh_info.mask, ecdh_info.amount, rct::H);
-				var Ctmp [32]byte
+				var C, Ctmp [32]byte
 				check := crypto.AddKeys2(&Ctmp, ecdhInfo.Mask, ecdhInfo.Amount, crypto.H)
 				if check {
-				  fmt.Printf("RCT outPk = %q\n", rawTx.Rct_Signatures.OutPk)
-				  fmt.Printf("RCT outpk_usd = %q\n", rawTx.Rct_Signatures.OutPk_Usd)
-				  fmt.Printf("Ctmp = %x\n", Ctmp)				  
-				  fmt.Printf("Mask: %x \n  Amount: %d \n", ecdhInfo.Mask, crypto.H2d(ecdhInfo.Amount))
+				  if len(vout.Target.Key) != 0 {
+				    Craw, _ := hex.DecodeString(rawTx.Rct_Signatures.OutPk[ind])
+				    copy(C[:], Craw)
+				  } else {
+				    Craw, _ := hex.DecodeString(rawTx.Rct_Signatures.OutPk_Usd[ind])
+				    copy(C[:], Craw)
+				  }
+				  if (crypto.EqualKeys(C, Ctmp)) {
+				    fmt.Printf("RCT outPk = %q\n", rawTx.Rct_Signatures.OutPk)
+				    fmt.Printf("RCT outpk_usd = %q\n", rawTx.Rct_Signatures.OutPk_Usd)
+				    fmt.Printf("C = %x, Ctmp = %x\n", C, Ctmp)				  
+				    fmt.Printf("Mask: %x \n  Amount: %d \n", ecdhInfo.Mask, crypto.H2d(ecdhInfo.Amount))
+				  }
 				}
 
 				// TODO: check if the provided commitment is correct
