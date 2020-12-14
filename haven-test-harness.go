@@ -10,11 +10,12 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/rpc"
+
 	"github.com/haven-protocol-org/monero-go-utils/crypto"
 	"github.com/powerman/rpc-codec/jsonrpc2"
 )
 
-type GetInfo_Result struct {
+type GetInfoResult struct {
 	Alt_Blocks_Count            int
 	Bloc_Size_Limit             uint
 	Block_Size_Median           uint
@@ -54,13 +55,7 @@ type GetInfo_Result struct {
 	Wide_Difficulty             string
 }
 
-type GetVersion_Result struct {
-	Status    string
-	Untrusted bool
-	Version   int
-}
-
-type Block_Header struct {
+type BlockHeader struct {
 	Block_Size    int
 	Depth         int
 	Difficulty    int64
@@ -76,9 +71,9 @@ type Block_Header struct {
 	Timestamp     int64
 }
 
-type BLOCK struct {
+type Block struct {
 	Blob          string
-	Block_Header  Block_Header
+	Block_Header  BlockHeader
 	Json          string
 	Miner_Tx_Hash string
 	Status        string
@@ -86,29 +81,29 @@ type BLOCK struct {
 	Tx_Hashes     []string
 }
 
-type vin_key struct {
+type VinKey struct {
 	Amount      int64
 	Key_Offsets []int64
 	K_Image     string
 }
 
-type vin_entry struct {
-	Key      vin_key
-	Onshore  vin_key
-	Offshore vin_key
+type VinEntry struct {
+	Key      VinKey
+	Onshore  VinKey
+	Offshore VinKey
 }
 
-type vout_key struct {
+type VoutKey struct {
 	Key      string
 	Offshore string
 }
 
-type vout_entry struct {
+type VoutEntry struct {
 	Amount int64
-	Target vout_key
+	Target VoutKey
 }
 
-type RCT_SIGNATURES struct {
+type RctSignatures struct {
 	Type               int
 	TxnFee             int64
 	TxnFee_Usd         int64
@@ -119,17 +114,17 @@ type RCT_SIGNATURES struct {
 	OutPk_Usd          []string
 }
 
-type RAW_TX struct {
+type RawTx struct {
 	Version        int
 	Unlock_Time    int
-	Vin            []vin_entry
-	Vout           []vout_entry
+	Vin            []VinEntry
+	Vout           []VoutEntry
 	Extra          []byte
-	Rct_Signatures RCT_SIGNATURES
+	Rct_Signatures RctSignatures
 }
 
 func ParseTxExtra(extra []byte) (error, map[byte][][]byte) {
-	
+
 	var parsedTxExtra = make(map[byte][][]byte)
 
 	for ind := 0; ind < len(extra); ind++ {
@@ -171,7 +166,7 @@ func ParseTxExtra(extra []byte) (error, map[byte][][]byte) {
 	return err, parsedTxExtra
 }
 
-func GetBlock(height int) (error, BLOCK) {
+func GetBlock(height int) (error, Block) {
 
 	// Connect to daemon RPC server
 	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:27750/json_rpc")
@@ -179,7 +174,7 @@ func GetBlock(height int) (error, BLOCK) {
 
 	req := map[string]int{"height": height}
 
-	var reply BLOCK
+	var reply Block
 	var err error
 
 	// Get Height
@@ -194,38 +189,41 @@ func GetBlock(height int) (error, BLOCK) {
 	return err, reply
 }
 
-func GetTxes(txes []string) (error, []RAW_TX) {
+func GetTxes(txes []string) (error, []RawTx) {
 
 	requestBody, err := json.Marshal(map[string]interface{}{"txs_hashes": txes, "decode_as_json": true})
 	if err != nil {
 		fmt.Printf("Marshaling Error: %q\n", err)
+		return err, nil
 	}
 
 	resp, err := http.Post("http://127.0.0.1:27750/get_transactions", "application/json", bytes.NewBuffer(requestBody))
 	if err != nil {
 		fmt.Printf("Http Error: %q\n", err)
+		return err, nil
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		fmt.Printf("Read Error: %q\n", err)
+		return err, nil
 	}
 
-	type GET_TX_RESULT struct {
+	type GetTxResult struct {
 		Status      string
 		Txs_As_Json []string
 	}
 
-	var txResult GET_TX_RESULT
-	var rawTxs []RAW_TX
+	var txResult GetTxResult
+	var rawTxs []RawTx
 
 	// parse the returned resutl
 	json.Unmarshal(body, &txResult)
 
 	// parse each tx in the result and save
 	for _, jsonTx := range txResult.Txs_As_Json {
-		var rawTx RAW_TX
+		var rawTx RawTx
 		json.Unmarshal([]byte(jsonTx), &rawTx)
 		rawTxs = append(rawTxs, rawTx)
 	}
@@ -239,7 +237,7 @@ func GetHeight() (error, int) {
 	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:17750/json_rpc")
 	defer clientHTTP.Close()
 
-	var reply GetInfo_Result
+	var reply GetInfoResult
 	var err error
 
 	// Get Height
@@ -260,7 +258,7 @@ func GetVersion() (error, string) {
 	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:17750/json_rpc")
 	defer clientHTTP.Close()
 
-	var reply GetInfo_Result
+	var reply GetInfoResult
 	var err error
 
 	// Get Height
@@ -275,119 +273,94 @@ func GetVersion() (error, string) {
 	return err, reply.Version
 }
 
+func h2d(key [32]byte) uint64 {
+	var val uint64 = 0
+	var j int = 0
+	for j = 7; j >= 0; j-- {
+		val = uint64(val*256 + uint64(key[j]))
+	}
+	return val
+}
+
 func main() {
 
-	// Local vars
-	var status error
-	// var height int
-	// var version string
-	var blk BLOCK
-	var rawTxes []RAW_TX
-
-	// Get the height of the chain
-	// status, height = GetHeight()
-	// if (status != nil) {
-	// } else {
-	// fmt.Printf("Height = %d\n", height)
-	// }
-
-	// status, version = GetVersion()
-	// if (status != nil) {
-	// } else {
-	// fmt.Printf("Version = %s\n", version)
-	// }
-
-	status, blk = GetBlock(5005)
+	// get block
+	status, blk := GetBlock(5005)
 	if status != nil {
 		return
 	}
 
-	status, rawTxes = GetTxes(blk.Tx_Hashes)
+	// get the tx data
+	status, rawTxes := GetTxes(blk.Tx_Hashes)
 
-	viewKeyRaw,_ := hex.DecodeString("67196f0bb28a661933e5d8bffe13d063b57be21323ce84e844c800878b5d9102")
+	// decode viewKey
+	viewKeyRaw, _ := hex.DecodeString("67196f0bb28a661933e5d8bffe13d063b57be21323ce84e844c800878b5d9102")
 	var viewKey [32]byte
-	copy(viewKey[:], viewKeyRaw[0:32])
-	publicSpendKeyRaw,_ := hex.DecodeString("5d33ee523d3f304d2e1892f57bc7f96761cf892ef98fc1ddd3e4763bc0e6e13c")
+	copy(viewKey[:], viewKeyRaw)
+
+	// decode spendKey
+	publicSpendKeyRaw, _ := hex.DecodeString("5d33ee523d3f304d2e1892f57bc7f96761cf892ef98fc1ddd3e4763bc0e6e13c")
 	var publicSpendKey [32]byte
-	copy(publicSpendKey[:], publicSpendKeyRaw[0:32])
+	copy(publicSpendKey[:], publicSpendKeyRaw)
 
 	for _, rawTx := range rawTxes {
 
+		// parse tx extra
 		var status, parsedTxExtra = ParseTxExtra(rawTx.Extra)
 		if status != nil {
 			fmt.Printf("Error: %q\n", status)
 		}
 
-		// Debug print statements to verify access to the required fields
-		// fmt.Printf("TX version = %d\n", rawTx.Version)
-		//fmt.Printf("TX XHV fee = %d, USD fee = %d\n", rawTx.Rct_Signatures.TxnFee, rawTx.Rct_Signatures.TxnFee_Usd)
-		//fmt.Printf("TX ecdhinfo = %q\n", rawTx.Rct_Signatures.EcdhInfo)
-
+		// get tx public key
 		var txPubKey [32]byte
 		copy(txPubKey[:], parsedTxExtra[1][0][0:32])
-		fmt.Printf("tx public key = %x\n", txPubKey)
-		
+
+		// generate the shared secret
 		sharedSecret, status := crypto.GenerateKeyDerivation(&txPubKey, &viewKey)
 		if status != nil {
-			fmt.Printf("Error: %q\n", status)
+			fmt.Printf("Error Creating Shared Secret: %q\n", status)
 			continue
 		}
-		var derivation = make([]byte, len(*sharedSecret)) 
- 		copy(derivation, sharedSecret[:])
-
-		//fmt.Printf("RawTX = %q\n", rawTx)
 
 		for ind, vout := range rawTx.Vout {
 
-		    	derivedTarget, status := crypto.DerivePublicKey(derivation, uint64(ind), &publicSpendKey)
+			derivedTarget, status := crypto.DerivePublicKey((*sharedSecret)[:], uint64(ind), &publicSpendKey)
 			if status != nil {
-				fmt.Printf("Error: %q\n", status)
+				fmt.Printf("Error Deriving a Target: %q\n", status)
 				continue
 			}
-			
+
 			found := false
 			if len(vout.Target.Key) != 0 {
-			   	var key,_ = hex.DecodeString(vout.Target.Key)
-				var keyNew [32]byte
-				copy(keyNew[:], key[0:32])
-				fmt.Printf("vout = %x\n", key)
-				if *derivedTarget == keyNew {
+				var targetRaw, _ = hex.DecodeString(vout.Target.Key)
+				var target [32]byte
+				copy(target[:], targetRaw)
+				if *derivedTarget == target {
 					found = true
 				}
 			} else {
-			   	var key,_ = hex.DecodeString(vout.Target.Offshore)
-				var keyNew [32]byte
-				copy(keyNew[:], key[0:32])
-				fmt.Printf("vout = %x\n", key)
-				if *derivedTarget == keyNew {
+				var targetRaw, _ = hex.DecodeString(vout.Target.Offshore)
+				var target [32]byte
+				copy(target[:], targetRaw)
+				if *derivedTarget == target {
 					found = true
 				}
 			}
 
-			fmt.Printf("derived target = %x\n", *derivedTarget)
-
 			if found {
-				// decode the amount
+				// decode the tx amount
 				fmt.Printf("We are the reciver. Trying to decode the amount.. %d\n", ind)
-				//EcdhDecode()
-			}else{
-				
-			}
+				ecdhInfo := crypto.EcdhDecode(rawTx.Rct_Signatures.EcdhInfo[ind], *sharedSecret)
+				fmt.Printf("MAsk: %x \n  Amount: %d \n", ecdhInfo.Mask, h2d(ecdhInfo.Amount))
 
-			
+				// TODO: check if the provided commitment is correct
+			} else {
+				// ignore tx. We aren't reciver
+			}
 
 		}
 
-		
 		fmt.Printf("--------\n")
-		// Read the TX vout array to find the correct one-time keys for outputs
-		// for _, vout := range rawTx.Vout {
-		// 	if len(vout.Target.Offshore) != 0 {
-		// 		fmt.Printf("vout target offshore = %s\n", vout.Target.Offshore)
-		// 	} else {
-		// 		fmt.Printf("vout target key = %s\n", vout.Target.Key)
-		// 	}
-		// }
 
 		// Decode the ECDHINFO blocks to get the amounts
 	}
