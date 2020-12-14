@@ -372,11 +372,29 @@ func (c *Client) getOutput(tx *RawTx) (interface{}, error) {
 
 		if found {
 			// decode the tx amount
-			fmt.Printf("We are the reciver. Trying to decode the amount.. %d\n", ind)
-			ecdhInfo := crypto.EcdhDecode(rawTx.Rct_Signatures.EcdhInfo[ind], *sharedSecret)
-			fmt.Printf("MAsk: %x \n  Amount: %d \n", ecdhInfo.Mask, h2d(ecdhInfo.Amount))
+			fmt.Printf("We are the receiver. Trying to decode the amount (index = %d)\n", ind)
+			scalar := crypto.DerivationToScalar(sharedSecret[:], uint64(ind));
+			ecdhInfo := crypto.EcdhDecode(rawTx.Rct_Signatures.EcdhInfo[ind], *scalar)
+			var C, Ctmp [32]byte
+			check := crypto.AddKeys2(&Ctmp, ecdhInfo.Mask, ecdhInfo.Amount, crypto.H)
+			if check {
+			  if len(vout.Target.Key) != 0 {
+			    // Onshore amount (XHV)
+			    Craw, _ := hex.DecodeString(rawTx.Rct_Signatures.OutPk[ind])
+			    copy(C[:], Craw)
+			  } else {
+			    // Offshore amount (xUSD)
+			    Craw, _ := hex.DecodeString(rawTx.Rct_Signatures.OutPk_Usd[ind])
+			    copy(C[:], Craw)
+			  }
+			  if (crypto.EqualKeys(C, Ctmp)) {
+			    //fmt.Printf("RCT outPk = %q\n", rawTx.Rct_Signatures.OutPk)
+			    //fmt.Printf("RCT outpk_usd = %q\n", rawTx.Rct_Signatures.OutPk_Usd)
+			    //fmt.Printf("C = %x, Ctmp = %x\n", C, Ctmp)				  
+			    fmt.Printf("Mask: %x \n  Amount: %d \n", ecdhInfo.Mask, crypto.H2d(ecdhInfo.Amount))
+			  }
+			}
 
-			// TODO: check if the provided commitment is correct
 		} else {
 			// ignore tx. We aren't reciver
 		}
