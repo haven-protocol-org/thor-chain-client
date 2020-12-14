@@ -1,11 +1,14 @@
 package haven
 
 import (
+	"encoding/hex"
 	"fmt"
+	"strconv"
 
 	"github.com/btcsuite/btcd/btcec" // TODO: btc imports must be updated with haven imports
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcutil"
+	"github.com/haven-protocol-org/monero-go-utils/crypto"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	tssp "gitlab.com/thorchain/tss/go-tss/tss"
@@ -17,6 +20,7 @@ import (
 	"gitlab.com/thorchain/thornode/bifrost/thorclient/types"
 	"gitlab.com/thorchain/thornode/bifrost/tss"
 	"gitlab.com/thorchain/thornode/common"
+	"gitlab.com/thorchain/thornode/common/cosmos"
 )
 
 // Client observes bitcoin chain and allows to sign and broadcast tx
@@ -203,11 +207,221 @@ func (c *Client) OnObservedTxIn(txIn types.TxInItem, blockHeight int64) {
 
 // FetchTxs retrieves txs for a block height
 func (c *Client) FetchTxs(height int64) (types.TxIn, error) {
-	// just to get rid of  the error
+
+	block, err := GetBlock(height)
+	if err != nil {
+		// TODO: check if this error valid for us
+		// time.Sleep(c.cfg.BlockScanner.BlockHeightDiscoverBackoff)
+		// if rpcErr, ok := err.(*btcjson.RPCError); ok && rpcErr.Code == btcjson.ErrRPCInvalidParameter {
+		// 	// this means the tx had been broadcast to chain, it must be another signer finished quicker then us
+		// 	return types.TxIn{}, btypes.UnavailableBlock
+		// }
+		return types.TxIn{}, fmt.Errorf("fail to get block: %w", err)
+	}
+
+	// TODO: figure out the reorg
+	// if err := c.processReorg(block); err != nil {
+	// 	c.logger.Err(err).Msg("fail to process bitcoin re-org")
+	// }
+
+	// update block meta
+	blockMeta, err := c.blockMetaAccessor.GetBlockMeta(block.Block_Header.Height)
+	if err != nil {
+		return types.TxIn{}, fmt.Errorf("fail to get block meta from storage: %w", err)
+	}
+	if blockMeta == nil {
+		blockMeta = NewBlockMeta(block.Block_Header.Prev_Hash, block.Block_Header.Height, block.Block_Header.Hash)
+	} else {
+		blockMeta.PreviousHash = block.Block_Header.Prev_Hash
+		blockMeta.BlockHash = block.Block_Header.Hash
+	}
+	if err := c.blockMetaAccessor.SaveBlockMeta(block.Block_Header.Height, blockMeta); err != nil {
+		return types.TxIn{}, fmt.Errorf("fail to save block meta into storage: %w", err)
+	}
+
+	// update prune block meta
+	pruneHeight := height - BlockCacheSize
+	if pruneHeight > 0 {
+		defer func() {
+			if err := c.blockMetaAccessor.PruneBlockMeta(pruneHeight); err != nil {
+				c.logger.Err(err).Msgf("fail to prune block meta, height(%d)", pruneHeight)
+			}
+		}()
+	}
+
+	txs, err := c.extractTxs(block)
+	if err != nil {
+		return types.TxIn{}, fmt.Errorf("fail to extract txs from block: %w", err)
+	}
+
+	// TODO: what is that
+	if err := c.sendNetworkFee(height); err != nil {
+		c.logger.Err(err).Msg("fail to send network fee")
+	}
+	return txs, nil
+}
+
+// extractTxs extracts txs from a block to type TxIn
+func (c *Client) extractTxs(block Block) (types.TxIn, error) {
+
+	// get txs from daemon
+	txs, err := GetTxs(block)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to get txs from daemon: %w", err)
+	}
+
+	// prepare the TxIn
 	txIn := types.TxIn{
 		Chain: c.GetChain(),
 	}
+
+	// populate txItems
 	var txItems []types.TxInItem
+	for _, tx := range txs {
+
+		// TODO: do we need ignore tx function?
+		// if c.ignoreTx(&tx) {
+		// 	continue
+		// }
+
+		// we don't know the sender
+		sender = ""
+
+		// TODO: implement get memo and get gas
+		// memo, err := c.getMemo(&tx)
+		// if err != nil {
+		// 	return types.TxIn{}, fmt.Errorf("fail to get memo from tx: %w", err)
+		// }
+		// gas, err := c.getGas(&tx)
+		// if err != nil {
+		// 	return types.TxIn{}, fmt.Errorf("fail to get gas from tx: %w", err)
+		// }
+
+		output := c.getOutput(sender, &tx)
+		amount, err := btcutil.NewAmount(output.Value)
+		if err != nil {
+			return types.TxIn{}, fmt.Errorf("fail to parse float64: %w", err)
+		}
+		amt := uint64(amount.ToUnit(btcutil.AmountSatoshi))
+		txItems = append(txItems, types.TxInItem{
+			BlockHeight: block.Height,
+			Tx:          tx.Txid,
+			Sender:      sender,
+			To:          output.ScriptPubKey.Addresses[0],
+			Coins: common.Coins{
+				common.NewCoin(common.BTCAsset, cosmos.NewUint(amt)),
+			},
+			Memo: memo,
+			Gas:  gas,
+		})
+
+	}
 	txIn.TxArray = txItems
+	txIn.Count = strconv.Itoa(len(txItems))
 	return txIn, nil
+}
+
+func (c *Client) getOutput(tx *RawTx) (interface{}, error) {
+
+	// we should return the an amount and a public spend key
+
+	// parse tx extra
+	var status, parsedTxExtra = c.parseTxExtra(tx.Extra)
+	if status != nil {
+		fmt.Printf("Error: %q\n", status)
+	}
+
+	// get tx public key
+	var txPubKey [32]byte
+	// TODO: don't forget we can have multiple tx public keys
+	copy(txPubKey[:], parsedTxExtra[1][0][0:32])
+
+	// generate the shared secret
+	sharedSecret, status := crypto.GenerateKeyDerivation(&txPubKey, &viewKey)
+	if status != nil {
+		fmt.Printf("Error Creating Shared Secret: %q\n", status)
+		continue
+	}
+
+	for ind, vout := range tx.Vout {
+
+		derivedTarget, status := crypto.DerivePublicKey((*sharedSecret)[:], uint64(ind), &publicSpendKey)
+		if status != nil {
+			fmt.Printf("Error Deriving a Target: %q\n", status)
+			continue
+		}
+
+		//TODO: we also should record the output asset type here
+		// so that we can pass it in the txIn to the observer
+		found := false
+		if len(vout.Target.Key) != 0 {
+			var targetRaw, _ = hex.DecodeString(vout.Target.Key)
+			var target [32]byte
+			copy(target[:], targetRaw)
+			if *derivedTarget == target {
+				found = true
+			}
+		} else {
+			var targetRaw, _ = hex.DecodeString(vout.Target.Offshore)
+			var target [32]byte
+			copy(target[:], targetRaw)
+			if *derivedTarget == target {
+				found = true
+			}
+		}
+
+		if found {
+			// decode the tx amount
+			fmt.Printf("We are the reciver. Trying to decode the amount.. %d\n", ind)
+			ecdhInfo := crypto.EcdhDecode(rawTx.Rct_Signatures.EcdhInfo[ind], *sharedSecret)
+			fmt.Printf("MAsk: %x \n  Amount: %d \n", ecdhInfo.Mask, h2d(ecdhInfo.Amount))
+
+			// TODO: check if the provided commitment is correct
+		} else {
+			// ignore tx. We aren't reciver
+		}
+
+	}
+}
+
+func (c *Client) parseTxExtra(extra []byte) (map[byte][][]byte, error) {
+
+	var parsedTxExtra = make(map[byte][][]byte)
+
+	for ind := 0; ind < len(extra); ind++ {
+
+		if extra[ind] == 0 {
+			// Padding
+		} else if extra[ind] == 0x01 {
+			// Pubkey - 32 byte key (fixed length)
+			var ba = make([]byte, 32)
+			ba = extra[ind+1 : ind+33]
+			parsedTxExtra[0x01] = append(parsedTxExtra[0x01], ba)
+			ind += 32
+		} else if extra[ind] == 2 {
+			// Nonce
+			var len = int(extra[ind+1])
+			ind += len
+		} else if extra[ind] == 3 {
+			// Merge mining key
+			ind += 40
+		} else if extra[ind] == 4 {
+			// Additional pubkeys
+		} else if extra[ind] == 0xde {
+			// miner gate tag
+			var len = int(extra[ind+1])
+			ind += len
+		} else if extra[ind] == 0x17 {
+			// Offshore data
+			var len = int(extra[ind+1])
+			var ba = make([]byte, len)
+			ba = extra[ind+2 : ind+2+len]
+			parsedTxExtra[0x17] = append(parsedTxExtra[0x17], ba)
+			ind += len
+		} else {
+		}
+	}
+
+	var err error // TODO: error handling while parsing
+	return parsedTxExtra, err
 }
