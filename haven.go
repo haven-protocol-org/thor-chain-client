@@ -37,6 +37,12 @@ type Client struct {
 	nodePubKey        common.PubKey
 }
 
+type TxVout struct {
+	Address string
+	Amount uint64
+	Coin string
+}
+
 // NewClient generates a new Client
 func NewClient(thorKeys *thorclient.Keys, cfg config.ChainConfiguration, server *tssp.TssServer, bridge *thorclient.ThorchainBridge, m *metrics.Metrics, keySignPartyMgr *thorclient.KeySignPartyMgr) (*Client, error) {
 
@@ -261,6 +267,10 @@ func (c *Client) FetchTxs(height int64) (types.TxIn, error) {
 	return txs, nil
 }
 
+func (c *Client) ignoreTx(rawTx *RawTx) bool {
+
+}
+
 // extractTxs extracts txs from a block to type TxIn
 func (c *Client) extractTxs(block Block) (types.TxIn, error) {
 
@@ -279,106 +289,99 @@ func (c *Client) extractTxs(block Block) (types.TxIn, error) {
 	var txItems []types.TxInItem
 	for ind, tx := range txs {
 
-		// TODO: do we need ignore tx function?
-		// if c.ignoreTx(&tx) {
-		// 	continue
-		// }
-
-		// we don't know the sender
-		sender = ""
-
-		// TODO: implement get memo and get gas
-		// memo, err := c.getMemo(&tx)
-		// if err != nil {
-		// 	return types.TxIn{}, fmt.Errorf("fail to get memo from tx: %w", err)
-		// }
-		// gas, err := c.getGas(&tx)
-		// if err != nil {
-		// 	return types.TxIn{}, fmt.Errorf("fail to get gas from tx: %w", err)
-		// }
-
 		// parse tx extra
 		var status, parsedTxExtra = c.parseTxExtra(tx.Extra)
 		if status != nil {
 			fmt.Printf("Error: %q\n", status)
 		}
 
+		// we don't know the sender
+		sender = ""
+
+		// get the gas
+		gas := 0
+		if val, ok := parsedTxExtra[0x17]; ok {
+			if string(val[0]) != 'N' {
+				gas = tx.Rct_Signatures.TxnFee
+			}else{
+				gas = tx.Rct_Signatures.TxnFee_Usd
+			}
+		}else{
+			gas = tx.Rct_Signatures.TxnFee
+		}
+
 		// get tx public key
 		var txPubKey [32]byte
-		// TODO: don't forget we can have multiple tx public keys
+		if len(parsedTxExtra[1]) != 1 {
+			continue
+		}
 		copy(txPubKey[:], parsedTxExtra[1][0][0:32])
 
 		// get the memo
-		var memoTmp = parsedTxExtra[0x18]
-		memo := string(memoTmp)
-
-		output := c.getOutput(&tx, txPubKey)
-		amount, err := btcutil.NewAmount(output.Value)
-		if err != nil {
-			return types.TxIn{}, fmt.Errorf("fail to parse float64: %w", err)
+		memo := ""
+		if val, ok := parsedTxExtra[0x18]; ok {
+			memo = string(val[0])
+		} else {
+			continue
 		}
-		amt := uint64(amount.ToUnit(btcutil.AmountSatoshi))
+
+		// get the output
+		output := c.getOutput(&tx, &txPubKey)
+
+		// construct txItems
 		txItems = append(txItems, types.TxInItem{
 			BlockHeight: block.Block_Header.Height,
 			Tx:          block.Tx_Hashes[ind],
 			Sender:      sender,
-			To:          output.ScriptPubKey.Addresses[0],
+			To:          output.Address,
 			Coins: common.Coins{
-				common.NewCoin(common.BTCAsset, cosmos.NewUint(amt)),
+				common.NewCoin(output.Coin, cosmos.NewUint(output.Amount)),
 			},
 			Memo: memo,
 			Gas:  gas,
 		})
-
 	}
 	txIn.TxArray = txItems
 	txIn.Count = strconv.Itoa(len(txItems))
 	return txIn, nil
 }
 
-func (c *Client) getOutput(tx *RawTx, txPubKey [32]byte) (interface{}, error) {
-
-	// we should return the an amount and a public spend key
+func (c *Client) getOutput(tx *RawTx, txPubKey *[32]byte) (TxVout, error) {
 
 	// generate the shared secret
 	sharedSecret, status := crypto.GenerateKeyDerivation(&txPubKey, &viewKey)
 	if status != nil {
-		fmt.Printf("Error Creating Shared Secret: %q\n", status)
-		continue
+		return nil, fmt.Errorf("Error Creating Shared Secret: %q\n", status)
 	}
 
 	for ind, vout := range tx.Vout {
 
-		derivedTarget, status := crypto.DerivePublicKey((*sharedSecret)[:], uint64(ind), &publicSpendKey)
+		var targetKey [32]byte
+		assetType := ""
+		if len(vout.Target.Key) != 0 {
+			var targetRaw, _ = hex.DecodeString(vout.Target.Key)
+			copy(targetKey[:], targetRaw)
+			assetType = "XHV"
+		} else {
+			var targetRaw, _ = hex.DecodeString(vout.Target.Offshore)
+			copy(targetKey[:], targetRaw)
+			assetType = "xUSD"
+		}
+
+		derivedPublicSpendKey, status := crypto.SubSecretFromTarget((*sharedSecret)[:], uint64(ind), &targetKey)
 		if status != nil {
-			fmt.Printf("Error Deriving a Target: %q\n", status)
+			fmt.Errorf("Error Deriving a Public Spend Key: %q\n", status)
 			continue
 		}
 
+		// TODO: We need to check for both ygg and asgard vault outputs
 		found := false
-		outputAsset := ""
-		if len(vout.Target.Key) != 0 {
-			var targetRaw, _ = hex.DecodeString(vout.Target.Key)
-			var target [32]byte
-			copy(target[:], targetRaw)
-			if *derivedTarget == target {
-				found = true
-			}
-			outputAsset = "xUSD"
-		} else {
-			var targetRaw, _ = hex.DecodeString(vout.Target.Offshore)
-			var target [32]byte
-			copy(target[:], targetRaw)
-			if *derivedTarget == target {
-				found = true
-			}
-			outputAsset = "XHV"
+		if *derivedPublicSpendKey == publicSpendKey {
+			found = true
 		}
 
 		if found {
-
 			// decode the tx amount and mask
-			fmt.Printf("We are the receiver. Trying to decode the amount (index = %d)\n", ind)
 			scalar := crypto.DerivationToScalar(sharedSecret[:], uint64(ind))
 			ecdhInfo := crypto.EcdhDecode(rawTx.Rct_Signatures.EcdhInfo[ind], *scalar)
 
@@ -400,13 +403,12 @@ func (c *Client) getOutput(tx *RawTx, txPubKey [32]byte) (interface{}, error) {
 				// check if the provided output commitment mathces with the one we calculated
 				if crypto.EqualKeys(C, Ctmp) {
 					Amount :=  crypto.H2d(ecdhInfo.Amount)
-					fmt.Printf("Mask: %x \n  Amount: %d \n", ecdhInfo.Mask, Amount)
-
 					// NOTE: We can just skip the rest of the outputs and return here because we expect we only own 1 output
-					return {
+					return TxVout{
 						// TODO: we must return the derived public spend key here. Not the derived target.
-						Target: derivedTarget,
+						Address: string(derivedPublicSpendKey),
 						Amount: Amount
+						Coin: assetType
 					}, nil
 				}
 			} else {
@@ -425,6 +427,8 @@ func (c *Client) parseTxExtra(extra []byte) (map[byte][][]byte, error) {
 
 		if extra[ind] == 0 {
 			// Padding
+			var len = int(extra[ind+1])
+			ind += len
 		} else if extra[ind] == 0x01 {
 			// Pubkey - 32 byte key (fixed length)
 			var ba = make([]byte, 32)
@@ -440,6 +444,7 @@ func (c *Client) parseTxExtra(extra []byte) (map[byte][][]byte, error) {
 			ind += 40
 		} else if extra[ind] == 4 {
 			// Additional pubkeys
+			ind += 32
 		} else if extra[ind] == 0xde {
 			// miner gate tag
 			var len = int(extra[ind+1])
@@ -458,7 +463,6 @@ func (c *Client) parseTxExtra(extra []byte) (map[byte][][]byte, error) {
 			ba = extra[ind+2 : ind+2+len]
 			parsedTxExtra[0x18] = append(parsedTxExtra[0x18], ba)
 			ind += len
-		} else {
 		}
 	}
 

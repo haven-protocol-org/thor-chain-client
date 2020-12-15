@@ -131,6 +131,8 @@ func ParseTxExtra(extra []byte) (error, map[byte][][]byte) {
 
 		if extra[ind] == 0 {
 			// Padding
+			var len = int(extra[ind+1])
+			ind += len
 		} else if extra[ind] == 0x01 {
 			// Pubkey - 32 byte key (fixed length)
 			var ba = make([]byte, 32)
@@ -146,6 +148,7 @@ func ParseTxExtra(extra []byte) (error, map[byte][][]byte) {
 			ind += 40
 		} else if extra[ind] == 4 {
 			// Additional pubkeys
+			ind += 32
 		} else if extra[ind] == 0xde {
 			// miner gate tag
 			var len = int(extra[ind+1])
@@ -324,28 +327,26 @@ func main() {
 		}
 
 		for ind, vout := range rawTx.Vout {
+			
+			var key [32]byte
+			if len(vout.Target.Key) != 0 {
+				var targetRaw, _ = hex.DecodeString(vout.Target.Key)
+				copy(key[:], targetRaw)
+			} else {
+				var targetRaw, _ = hex.DecodeString(vout.Target.Offshore)
+				copy(key[:], targetRaw)
+			}
 
-			derivedTarget, status := crypto.DerivePublicKey((*sharedSecret)[:], uint64(ind), &publicSpendKey)
+			derivedPublicSpendKey, status := crypto.SubSecretFromTarget((*sharedSecret)[:], uint64(ind), &key)
 			if status != nil {
-				fmt.Printf("Error Deriving a Target: %q\n", status)
+				fmt.Printf("Error Deriving a Public Spend Key: %q\n", status)
 				continue
 			}
 
 			found := false
-			if len(vout.Target.Key) != 0 {
-				var targetRaw, _ = hex.DecodeString(vout.Target.Key)
-				var target [32]byte
-				copy(target[:], targetRaw)
-				if *derivedTarget == target {
-					found = true
-				}
-			} else {
-				var targetRaw, _ = hex.DecodeString(vout.Target.Offshore)
-				var target [32]byte
-				copy(target[:], targetRaw)
-				if *derivedTarget == target {
-					found = true
-				}
+			if *derivedPublicSpendKey == publicSpendKey {
+				fmt.Printf("\t\tKEYS MATHCES! index = %d  \n", ind)
+				found :=true
 			}
 
 			if found {
@@ -366,10 +367,10 @@ func main() {
 						copy(C[:], Craw)
 					}
 					if crypto.EqualKeys(C, Ctmp) {
-						fmt.Printf("RCT outPk = %q\n", rawTx.Rct_Signatures.OutPk)
-						fmt.Printf("RCT outpk_usd = %q\n", rawTx.Rct_Signatures.OutPk_Usd)
-						fmt.Printf("C = %x, Ctmp = %x\n", C, Ctmp)
-						fmt.Printf("Mask: %x \n  Amount: %d \n", ecdhInfo.Mask, crypto.H2d(ecdhInfo.Amount))
+						// fmt.Printf("RCT outPk = %q\n", rawTx.Rct_Signatures.OutPk)
+						// fmt.Printf("RCT outpk_usd = %q\n", rawTx.Rct_Signatures.OutPk_Usd)
+						// fmt.Printf("C = %x, Ctmp = %x\n", C, Ctmp)
+						// fmt.Printf("Mask: %x \n  Amount: %d \n", ecdhInfo.Mask, crypto.H2d(ecdhInfo.Amount))
 					}
 				}
 
