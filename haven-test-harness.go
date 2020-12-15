@@ -277,8 +277,8 @@ func h2d(key [32]byte) uint64 {
 	var val uint64 = 0
 	var j int = 0
 	for j = 7; j >= 0; j-- {
-	  val *= 256
-	  val += uint64(uint8(key[j]))
+		val *= 256
+		val += uint64(uint8(key[j]))
 	}
 	return val
 }
@@ -351,28 +351,28 @@ func main() {
 			if found {
 				// decode the tx amount
 				fmt.Printf("We are the receiver. Trying to decode the amount (index = %d)\n", ind)
-				scalar := crypto.DerivationToScalar(sharedSecret[:], uint64(ind));
+				scalar := crypto.DerivationToScalar(sharedSecret[:], uint64(ind))
 				ecdhInfo := crypto.EcdhDecode(rawTx.Rct_Signatures.EcdhInfo[ind], *scalar)
-				//rct::addKeys2(Ctmp, ecdh_info.mask, ecdh_info.amount, rct::H);
+
+				// check if the provided output commitments mathces
 				var C, Ctmp [32]byte
 				check := crypto.AddKeys2(&Ctmp, ecdhInfo.Mask, ecdhInfo.Amount, crypto.H)
 				if check {
-				  if len(vout.Target.Key) != 0 {
-				    Craw, _ := hex.DecodeString(rawTx.Rct_Signatures.OutPk[ind])
-				    copy(C[:], Craw)
-				  } else {
-				    Craw, _ := hex.DecodeString(rawTx.Rct_Signatures.OutPk_Usd[ind])
-				    copy(C[:], Craw)
-				  }
-				  if (crypto.EqualKeys(C, Ctmp)) {
-				    fmt.Printf("RCT outPk = %q\n", rawTx.Rct_Signatures.OutPk)
-				    fmt.Printf("RCT outpk_usd = %q\n", rawTx.Rct_Signatures.OutPk_Usd)
-				    fmt.Printf("C = %x, Ctmp = %x\n", C, Ctmp)				  
-				    fmt.Printf("Mask: %x \n  Amount: %d \n", ecdhInfo.Mask, crypto.H2d(ecdhInfo.Amount))
-				  }
+					if len(vout.Target.Key) != 0 {
+						Craw, _ := hex.DecodeString(rawTx.Rct_Signatures.OutPk[ind])
+						copy(C[:], Craw)
+					} else {
+						Craw, _ := hex.DecodeString(rawTx.Rct_Signatures.OutPk_Usd[ind])
+						copy(C[:], Craw)
+					}
+					if crypto.EqualKeys(C, Ctmp) {
+						fmt.Printf("RCT outPk = %q\n", rawTx.Rct_Signatures.OutPk)
+						fmt.Printf("RCT outpk_usd = %q\n", rawTx.Rct_Signatures.OutPk_Usd)
+						fmt.Printf("C = %x, Ctmp = %x\n", C, Ctmp)
+						fmt.Printf("Mask: %x \n  Amount: %d \n", ecdhInfo.Mask, crypto.H2d(ecdhInfo.Amount))
+					}
 				}
 
-				// TODO: check if the provided commitment is correct
 			} else {
 				// ignore tx. We aren't reciver
 			}
