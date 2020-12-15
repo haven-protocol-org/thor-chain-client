@@ -265,7 +265,7 @@ func (c *Client) FetchTxs(height int64) (types.TxIn, error) {
 func (c *Client) extractTxs(block Block) (types.TxIn, error) {
 
 	// get txs from daemon
-	txs, err := GetTxs(block)
+	txs, err := GetTxs(block.Tx_Hashes)
 	if err != nil {
 		return nil, fmt.Errorf("Failed to get txs from daemon: %w", err)
 	}
@@ -277,7 +277,7 @@ func (c *Client) extractTxs(block Block) (types.TxIn, error) {
 
 	// populate txItems
 	var txItems []types.TxInItem
-	for _, tx := range txs {
+	for ind, tx := range txs {
 
 		// TODO: do we need ignore tx function?
 		// if c.ignoreTx(&tx) {
@@ -297,15 +297,30 @@ func (c *Client) extractTxs(block Block) (types.TxIn, error) {
 		// 	return types.TxIn{}, fmt.Errorf("fail to get gas from tx: %w", err)
 		// }
 
-		output := c.getOutput(sender, &tx)
+		// parse tx extra
+		var status, parsedTxExtra = c.parseTxExtra(tx.Extra)
+		if status != nil {
+			fmt.Printf("Error: %q\n", status)
+		}
+
+		// get tx public key
+		var txPubKey [32]byte
+		// TODO: don't forget we can have multiple tx public keys
+		copy(txPubKey[:], parsedTxExtra[1][0][0:32])
+
+		// get the memo
+		var memoTmp = parsedTxExtra[0x18]
+		memo := string(memoTmp)
+
+		output := c.getOutput(&tx, txPubKey)
 		amount, err := btcutil.NewAmount(output.Value)
 		if err != nil {
 			return types.TxIn{}, fmt.Errorf("fail to parse float64: %w", err)
 		}
 		amt := uint64(amount.ToUnit(btcutil.AmountSatoshi))
 		txItems = append(txItems, types.TxInItem{
-			BlockHeight: block.Height,
-			Tx:          tx.Txid,
+			BlockHeight: block.Block_Header.Height,
+			Tx:          block.Tx_Hashes[ind],
 			Sender:      sender,
 			To:          output.ScriptPubKey.Addresses[0],
 			Coins: common.Coins{
@@ -321,20 +336,9 @@ func (c *Client) extractTxs(block Block) (types.TxIn, error) {
 	return txIn, nil
 }
 
-func (c *Client) getOutput(tx *RawTx) (interface{}, error) {
+func (c *Client) getOutput(tx *RawTx, txPubKey [32]byte) (interface{}, error) {
 
 	// we should return the an amount and a public spend key
-
-	// parse tx extra
-	var status, parsedTxExtra = c.parseTxExtra(tx.Extra)
-	if status != nil {
-		fmt.Printf("Error: %q\n", status)
-	}
-
-	// get tx public key
-	var txPubKey [32]byte
-	// TODO: don't forget we can have multiple tx public keys
-	copy(txPubKey[:], parsedTxExtra[1][0][0:32])
 
 	// generate the shared secret
 	sharedSecret, status := crypto.GenerateKeyDerivation(&txPubKey, &viewKey)
@@ -351,9 +355,8 @@ func (c *Client) getOutput(tx *RawTx) (interface{}, error) {
 			continue
 		}
 
-		//TODO: we also should record the output asset type here
-		// so that we can pass it in the txIn to the observer
 		found := false
+		outputAsset := ""
 		if len(vout.Target.Key) != 0 {
 			var targetRaw, _ = hex.DecodeString(vout.Target.Key)
 			var target [32]byte
@@ -361,6 +364,7 @@ func (c *Client) getOutput(tx *RawTx) (interface{}, error) {
 			if *derivedTarget == target {
 				found = true
 			}
+			outputAsset = "xUSD"
 		} else {
 			var targetRaw, _ = hex.DecodeString(vout.Target.Offshore)
 			var target [32]byte
@@ -368,38 +372,49 @@ func (c *Client) getOutput(tx *RawTx) (interface{}, error) {
 			if *derivedTarget == target {
 				found = true
 			}
+			outputAsset = "XHV"
 		}
 
 		if found {
-			// decode the tx amount
+
+			// decode the tx amount and mask
 			fmt.Printf("We are the receiver. Trying to decode the amount (index = %d)\n", ind)
-			scalar := crypto.DerivationToScalar(sharedSecret[:], uint64(ind));
+			scalar := crypto.DerivationToScalar(sharedSecret[:], uint64(ind))
 			ecdhInfo := crypto.EcdhDecode(rawTx.Rct_Signatures.EcdhInfo[ind], *scalar)
+
+			// Calculate the amount commitment from decoded ecdh info
 			var C, Ctmp [32]byte
-			check := crypto.AddKeys2(&Ctmp, ecdhInfo.Mask, ecdhInfo.Amount, crypto.H)
-			if check {
-			  if len(vout.Target.Key) != 0 {
-			    // Onshore amount (XHV)
-			    Craw, _ := hex.DecodeString(rawTx.Rct_Signatures.OutPk[ind])
-			    copy(C[:], Craw)
-			  } else {
-			    // Offshore amount (xUSD)
-			    Craw, _ := hex.DecodeString(rawTx.Rct_Signatures.OutPk_Usd[ind])
-			    copy(C[:], Craw)
-			  }
-			  if (crypto.EqualKeys(C, Ctmp)) {
-			    //fmt.Printf("RCT outPk = %q\n", rawTx.Rct_Signatures.OutPk)
-			    //fmt.Printf("RCT outpk_usd = %q\n", rawTx.Rct_Signatures.OutPk_Usd)
-			    //fmt.Printf("C = %x, Ctmp = %x\n", C, Ctmp)				  
-			    fmt.Printf("Mask: %x \n  Amount: %d \n", ecdhInfo.Mask, crypto.H2d(ecdhInfo.Amount))
-			  }
+			success := crypto.AddKeys2(&Ctmp, ecdhInfo.Mask, ecdhInfo.Amount, crypto.H)
+
+			if success {
+				if outputAsset == "XHV" {
+					// Onshore amount (XHV)
+					Craw, _ := hex.DecodeString(rawTx.Rct_Signatures.OutPk[ind])
+					copy(C[:], Craw)
+				} else {
+					// Offshore amount (xUSD)
+					Craw, _ := hex.DecodeString(rawTx.Rct_Signatures.OutPk_Usd[ind])
+					copy(C[:], Craw)
+				}
+
+				// check if the provided output commitment mathces with the one we calculated
+				if crypto.EqualKeys(C, Ctmp) {
+					Amount :=  crypto.H2d(ecdhInfo.Amount)
+					fmt.Printf("Mask: %x \n  Amount: %d \n", ecdhInfo.Mask, Amount)
+
+					// NOTE: We can just skip the rest of the outputs and return here because we expect we only own 1 output
+					return {
+						// TODO: we must return the derived public spend key here. Not the derived target.
+						Target: derivedTarget,
+						Amount: Amount
+					}, nil
+				}
+			} else {
+				fmt.Errorf("Calculation of the commitment failed for output index = %d", ind)
 			}
-
-		} else {
-			// ignore tx. We aren't reciver
 		}
-
 	}
+
 }
 
 func (c *Client) parseTxExtra(extra []byte) (map[byte][][]byte, error) {
@@ -437,7 +452,7 @@ func (c *Client) parseTxExtra(extra []byte) (map[byte][][]byte, error) {
 			parsedTxExtra[0x17] = append(parsedTxExtra[0x17], ba)
 			ind += len
 		} else if extra[ind] == 0x18 {
-		        // Thorchain data
+			// Thorchain memo data
 			var len = int(extra[ind+1])
 			var ba = make([]byte, len)
 			ba = extra[ind+2 : ind+2+len]
