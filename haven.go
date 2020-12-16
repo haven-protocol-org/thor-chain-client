@@ -189,8 +189,7 @@ func (c *Client) OnObservedTxIn(txIn types.TxInItem, blockHeight int64) {
 		return
 	}
 
-	// NOTE: The fact that we are calling GetCoin function must mean that each txIn can have multiple asset types.
-	// because some chains have multiple assets in the same chain.
+	// get the txItem value
 	value := float64(txIn.Coins.GetCoin(common.BTCAsset).Amount.Uint64()) / common.One
 
 	// get the block meta for this height
@@ -265,10 +264,6 @@ func (c *Client) FetchTxs(height int64) (types.TxIn, error) {
 		c.logger.Err(err).Msg("fail to send network fee")
 	}
 	return txs, nil
-}
-
-func (c *Client) ignoreTx(rawTx *RawTx) bool {
-
 }
 
 // extractTxs extracts txs from a block to type TxIn
@@ -359,11 +354,11 @@ func (c *Client) getOutput(tx *RawTx, txPubKey *[32]byte) (TxVout, error) {
 		var targetKey [32]byte
 		assetType := ""
 		if len(vout.Target.Key) != 0 {
-			var targetRaw, _ = hex.DecodeString(vout.Target.Key)
+			targetRaw, _ := hex.DecodeString(vout.Target.Key)
 			copy(targetKey[:], targetRaw)
 			assetType = "XHV"
 		} else {
-			var targetRaw, _ = hex.DecodeString(vout.Target.Offshore)
+			targetRaw, _ := hex.DecodeString(vout.Target.Offshore)
 			copy(targetKey[:], targetRaw)
 			assetType = "xUSD"
 		}
@@ -405,7 +400,6 @@ func (c *Client) getOutput(tx *RawTx, txPubKey *[32]byte) (TxVout, error) {
 					Amount :=  crypto.H2d(ecdhInfo.Amount)
 					// NOTE: We can just skip the rest of the outputs and return here because we expect we only own 1 output
 					return TxVout{
-						// TODO: we must return the derived public spend key here. Not the derived target.
 						Address: string(derivedPublicSpendKey),
 						Amount: Amount
 						Coin: assetType
