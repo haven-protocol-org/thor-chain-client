@@ -26,8 +26,8 @@ type GetInfoResult struct {
 	Difficulty_Top64            int64
 	Free_Space                  int64
 	Grey_Peerlist_Size          int
-	Height                      int
-	Height_Without_Bootstrap    int
+	Height                      uint64
+	Height_Without_Bootstrap    uint64
 	Incoming_Connections_Count  int
 	Mainnet                     bool
 	Nettype                     string
@@ -118,10 +118,11 @@ type RawTx struct {
 	Vout           []VoutEntry
 	Extra          []byte
 	Rct_Signatures RctSignatures
+	Block_Height   uint64
 }
 
 // GetHeight gets the height of the haven blockchain
-func GetHeight() (int64, error) {
+func GetHeight() (uint64, error) {
 
 	// Connect to daemon RPC server
 	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:17750/json_rpc")
@@ -210,9 +211,14 @@ func GetTxes(txes []string) ([]RawTx, error) {
 		return nil, err
 	}
 
+	type Tx struct {
+		Block_Height uint64
+	}
+
 	type GetTxResult struct {
 		Status      string
 		Txs_As_Json []string
+		Txs         []Tx
 	}
 
 	var txResult GetTxResult
@@ -226,7 +232,48 @@ func GetTxes(txes []string) ([]RawTx, error) {
 		var rawTx RawTx
 		json.Unmarshal([]byte(jsonTx), &rawTx)
 		rawTxs = append(rawTxs, rawTx)
+		rawTxs.Block_Height = txResult.Txs[ind].Block_Height
 	}
 
 	return rawTxs, err
+}
+
+func GetPoolTxs() ([]string, error) {
+
+	resp, err := http.Get("http://127.0.0.1:27750/get_transaction_pool")
+	if err != nil {
+		fmt.Printf("Http Error: %q\n", err)
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		fmt.Printf("Read Error: %q\n", err)
+		return nil, err
+	}
+
+	type Tx struct {
+		Id_Hash string
+	}
+
+	type getPoolTxs struct {
+		Transactions []Tx
+	}
+
+	var result getPoolTxs
+
+	// parse the returned resutl
+	err = json.Unmarshal(body, &result)
+	if err != nil {
+		fmt.Printf("There was an error decoding the json. err = %s", err)
+		return nil, err
+	}
+
+	var returnResult = make([]string, 0)
+	for _, Tx := range result.Transactions {
+		returnResult = append(returnResult, Tx.Id_Hash)
+	}
+
+	return returnResult, nil
 }
