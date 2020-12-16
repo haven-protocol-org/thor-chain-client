@@ -5,9 +5,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/btcsuite/btcd/btcec" // TODO: btc imports must be updated with haven imports
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcutil"
 	"github.com/haven-protocol-org/monero-go-utils/crypto"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -25,16 +22,17 @@ import (
 
 // Client observes bitcoin chain and allows to sign and broadcast tx
 type Client struct {
-	logger            zerolog.Logger
-	cfg               config.ChainConfiguration
-	chain             common.Chain
-	privateKey        *btcec.PrivateKey //TODO: must be xhv priv key
-	blockScanner      *blockscanner.BlockScanner
-	blockMetaAccessor BlockMetaAccessor
-	ksWrapper         *KeySignWrapper
-	bridge            *thorclient.ThorchainBridge
-	globalErrataQueue chan<- types.ErrataBlock
-	nodePubKey        common.PubKey
+	logger            	zerolog.Logger
+	cfg               	config.ChainConfiguration
+	chain             	common.Chain
+	privViewKey			[32]byte
+	privSpendKey		[32]byte
+	blockScanner      	*blockscanner.BlockScanner
+	blockMetaAccessor 	BlockMetaAccessor
+	ksWrapper         	*KeySignWrapper
+	bridge           	*thorclient.ThorchainBridge
+	globalErrataQueue 	chan<- types.ErrataBlock
+	nodePubKey        	common.PubKey
 }
 
 type TxVout struct {
@@ -55,13 +53,12 @@ func NewClient(thorKeys *thorclient.Keys, cfg config.ChainConfiguration, server 
 		return nil, fmt.Errorf("fail to get THORChain private key: %w", err)
 	}
 
-	//TODO: implement get private key function
-	havenPrivateKey, err := getHavenPrivateKey(thorPrivateKey)
+	privViewKey, privSpendKey := getHavenPrivateKey(thorPrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("fail to convert private key for BTC: %w", err)
 	}
 
-	ksWrapper, err := NewKeySignWrapper(havenPrivateKey, bridge, tssKm, keySignPartyMgr)
+	ksWrapper, err := NewKeySignWrapper(privViewKey, privSpendKey, bridge, tssKm, keySignPartyMgr)
 	if err != nil {
 		return nil, fmt.Errorf("fail to create keysign wrapper: %w", err)
 	}
@@ -72,13 +69,14 @@ func NewClient(thorKeys *thorclient.Keys, cfg config.ChainConfiguration, server 
 	}
 
 	c := &Client{
-		logger:     log.Logger.With().Str("module", "haven").Logger(),
-		cfg:        cfg,
-		chain:      cfg.ChainID,
-		privateKey: havenPrivateKey,
-		ksWrapper:  ksWrapper,
-		bridge:     bridge,
-		nodePubKey: nodePubKey,
+		logger:     		log.Logger.With().Str("module", "haven").Logger(),
+		cfg:        		cfg,
+		chain:      		cfg.ChainID,
+		privViewKey			privViewKey,
+		privSpendKey		privSpendKey,
+		ksWrapper:  		ksWrapper,
+		bridge:     		bridge,
+		nodePubKey: 		nodePubKey,
 	}
 
 	var path string // if not set later, will in memory storage
@@ -121,7 +119,7 @@ func (c *Client) GetConfig() config.ChainConfiguration {
 
 // GetChain returns haven Chain
 func (c *Client) GetChain() common.Chain {
-	return "XHV" // common.XHVCHain
+	return common.XHVCHain
 }
 
 // GetHeight returns current block height
@@ -131,7 +129,7 @@ func (c *Client) GetHeight() (int64, error) {
 
 // GetAddress return current signer address, it will be bech32 encoded address
 func (c *Client) GetAddress(poolPubKey common.PubKey) string {
-	addr, err := poolPubKey.GetAddress("XHV") // common.XHVCHain
+	addr, err := poolPubKey.GetAddress(common.XHVCHain)
 	if err != nil {
 		c.logger.Error().Err(err).Str("pool_pub_key", poolPubKey.String()).Msg("fail to get pool address")
 		return ""
@@ -163,17 +161,14 @@ func (c *Client) GetAccount(pkey common.PubKey) (common.Account, error) {
 			total += utxo.Value
 		}
 	}
-	totalAmt, err := btcutil.NewAmount(total) // TODO: must be haven amount type
-	if err != nil {
-		return acct, fmt.Errorf("fail to convert total amount: %w", err)
-	}
+	total = total * 1000000000000
 
 	// return a new Account with the total amount spendable.
 	//TODO: 0,0 in the beginng???
 	return common.NewAccount(0, 0, common.AccountCoins{
 		common.AccountCoin{
 			Amount: uint64(totalAmt),
-			Denom:  common.BTCAsset.String(), // TODO: common.XHVAsset.String()
+			Denom:  common.XHVAsset.String(),
 		},
 	}, false), nil
 }
@@ -224,10 +219,10 @@ func (c *Client) FetchTxs(height int64) (types.TxIn, error) {
 		return types.TxIn{}, fmt.Errorf("fail to get block: %w", err)
 	}
 
-	// TODO: figure out the reorg
-	// if err := c.processReorg(block); err != nil {
-	// 	c.logger.Err(err).Msg("fail to process bitcoin re-org")
-	// }
+	// Check for reorg
+	if err := c.processReorg(block); err != nil {
+		c.logger.Err(err).Msg("fail to process bitcoin re-org")
+	}
 
 	// update block meta
 	blockMeta, err := c.blockMetaAccessor.GetBlockMeta(block.Block_Header.Height)
@@ -254,16 +249,143 @@ func (c *Client) FetchTxs(height int64) (types.TxIn, error) {
 		}()
 	}
 
+	// get txs as txInItems
 	txs, err := c.extractTxs(block)
 	if err != nil {
 		return types.TxIn{}, fmt.Errorf("fail to extract txs from block: %w", err)
 	}
 
-	// TODO: what is that
+	// send thorchain network fee
 	if err := c.sendNetworkFee(height); err != nil {
 		c.logger.Err(err).Msg("fail to send network fee")
 	}
+
 	return txs, nil
+}
+
+func (c *Client) sendNetworkFee(height int64) error {
+
+	// TODO: an endpoint to get the AverageTxSize and AverageFeeRate
+	result, err := c.client.GetBlockStats(height, nil)
+	if err != nil {
+		return fmt.Errorf("fail to get block stats")
+	}
+	// fee rate and tx size should not be 0
+	if result.AverageFeeRate == 0 || result.AverageTxSize == 0 {
+		return nil
+	}
+
+	txid, err := c.bridge.PostNetworkFee(height, common.BTCChain, result.AverageTxSize, sdk.NewUint(uint64(result.AverageFeeRate)))
+	if err != nil {
+		return fmt.Errorf("fail to post network fee to thornode: %w", err)
+	}
+	c.logger.Debug().Str("txid", txid.String()).Msg("send network fee to THORNode successfully")
+	return nil
+}
+
+func (c *Client) processReorg(block Block) error {
+	previousHeight := block.Height - 1
+	prevBlockMeta, err := c.blockMetaAccessor.GetBlockMeta(previousHeight)
+	if err != nil {
+		return fmt.Errorf("fail to get block meta of height(%d) : %w", previousHeight, err)
+	}
+	if prevBlockMeta == nil {
+		return nil
+	}
+	// the block's previous hash need to be the same as the block hash chain client recorded in block meta
+	// blockMetas[PreviousHeight].BlockHash == Block.PreviousHash
+	if strings.EqualFold(prevBlockMeta.BlockHash, block.PreviousHash) {
+		return nil
+	}
+
+	c.logger.Info().Msgf("re-org detected, current block height:%d ,previous block hash is : %s , however block meta at height: %d, block hash is %s", block.Height, block.PreviousHash, prevBlockMeta.Height, prevBlockMeta.BlockHash)
+	return c.reConfirmTx()
+}
+
+// reConfirmTx will be kicked off only when chain client detected a re-org on bitcoin chain
+// it will read through all the block meta data from local storage , and go through all the UTXOes.
+// For each UTXO , it will send a RPC request to bitcoin chain , double check whether the TX exist or not
+// if the tx still exist , then it is all good, if a transaction previous we detected , however doesn't exist anymore , that means
+// the transaction had been removed from chain,  chain client should report to thorchain
+func (c *Client) reConfirmTx() error {
+	blockMetas, err := c.blockMetaAccessor.GetBlockMetas()
+	if err != nil {
+		return fmt.Errorf("fail to get block metas from local storage: %w", err)
+	}
+
+	for _, blockMeta := range blockMetas {
+		var errataTxs []types.ErrataTx
+		for _, utxo := range blockMeta.UnspentTransactionOutputs {
+			txID := utxo.TxID.String()
+			if c.confirmTx(&utxo.TxID) {
+				c.logger.Info().Msgf("block height: %d, tx: %s still exist", blockMeta.Height, txID)
+				continue
+			}
+			// this means the tx doesn't exist in chain ,thus should errata it
+			errataTxs = append(errataTxs, types.ErrataTx{
+				TxID:  common.TxID(txID),
+				Chain: common.XHVChain,
+			})
+			// remove the UTXO from block meta , so signer will not spend it
+			blockMeta.RemoveUTXO(utxo.GetKey())
+		}
+		if len(errataTxs) == 0 {
+			continue
+		}
+		c.globalErrataQueue <- types.ErrataBlock{
+			Height: blockMeta.Height,
+			Txs:    errataTxs,
+		}
+		// Let's get the block again to fix the block hash
+		r, err := GetBlock(blockMeta.Height)
+		if err != nil {
+			c.logger.Err(err).Msgf("fail to get block verbose tx result: %d", blockMeta.Height)
+		}
+		blockMeta.PreviousHash = r.Block_Header.Prev_Hash
+		blockMeta.BlockHash = r.Block_Header.Hash
+		if err := c.blockMetaAccessor.SaveBlockMeta(blockMeta.Height, blockMeta); err != nil {
+			c.logger.Err(err).Msgf("fail to save block meta of height: %d ", blockMeta.Height)
+		}
+	}
+	return nil
+}
+
+// confirmTx check a tx is valid on chain post reorg
+func (c *Client) confirmTx(txHash *chainhash.Hash) bool {
+	
+	// first check if tx is in mempool, just signed it for example
+	// if no error it means its valid mempool tx and move on
+	poolTxs, err := GetPoolTxs()
+	if err != nil {
+		fmt.Errorf("Error Getting Pool Txs: %w", err)
+		return false
+	}
+
+	// check if the tx is still in the pool. If it is, that means it is a valid tx.
+	for _, tx := range poolTxs {
+		if tx == txHash {
+			return true
+		}
+	}
+
+
+	// then get raw tx and check if it has confirmations or not
+	// if no confirmation and not in mempool then invalid
+	var txHashes = make([]string, 1)
+	txHashes = append(txHashes, txHash)
+	tx, err := GetTxes(txHashes)
+	if err != nil {
+		fmt.Errorf("Error Getting Tx: %s", txHash)
+		return false
+	}
+
+	// check if the tx has confirmations
+	currentHeight, err := GetHeight()
+	if tx.Block_Height == currentHeight {
+		return false
+	}
+
+	return true
 }
 
 // extractTxs extracts txs from a block to type TxIn
