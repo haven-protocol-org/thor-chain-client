@@ -58,6 +58,16 @@ func NewClient(thorKeys *thorclient.Keys, cfg config.ChainConfiguration, server 
 		return nil, fmt.Errorf("fail to convert private key for BTC: %w", err)
 	}
 
+	// try to generate a haven wallet
+	if !generateHavenWallet(privViewKey, privSpendKey, cfg.WalletName, cfg.password) {
+		return nil, fmt.Errorf("Fail to create a haven wallet!")
+	}
+
+	// try to login to wallet
+	if !loginToWallet(cfg.WalletName, cfg.password) {
+		return nil, fmt.Errorf("Fail to open the haven wallet!")
+	}
+
 	ksWrapper, err := NewKeySignWrapper(privViewKey, privSpendKey, bridge, tssKm, keySignPartyMgr)
 	if err != nil {
 		return nil, fmt.Errorf("fail to create keysign wrapper: %w", err)
@@ -177,13 +187,6 @@ func (c *Client) GetAccount(pkey common.PubKey) (common.Account, error) {
 // For bitcoin chain client we want to save the utxo we can spend later to sign
 func (c *Client) OnObservedTxIn(txIn types.TxInItem, blockHeight int64) {
 
-	// convert TxID to btc hash type
-	hash, err := chainhash.NewHashFromStr(txIn.Tx) // TODO: make a haven hash type if necessary
-	if err != nil {
-		c.logger.Error().Err(err).Str("txID", txIn.Tx).Msg("fail to add spendable utxo to storage")
-		return
-	}
-
 	// get the txItem value
 	value := float64(txIn.Coins.GetCoin(common.BTCAsset).Amount.Uint64()) / common.One
 
@@ -198,7 +201,7 @@ func (c *Client) OnObservedTxIn(txIn types.TxInItem, blockHeight int64) {
 	}
 
 	// create a new unspent transaction output and save to the block it belongs to.
-	utxo := NewUnspentTransactionOutput(*hash, 0, value, blockHeight, txIn.ObservedVaultPubKey)
+	utxo := NewUnspentTransactionOutput(txIn.Tx, 0, value, blockHeight, txIn.ObservedVaultPubKey)
 	blockMeta.AddUTXO(utxo)
 	if err := c.blockMetaAccessor.SaveBlockMeta(blockHeight, blockMeta); err != nil {
 		c.logger.Err(err).Msgf("fail to save block meta to storage,block height(%d)", blockHeight)
@@ -210,12 +213,6 @@ func (c *Client) FetchTxs(height int64) (types.TxIn, error) {
 
 	block, err := GetBlock(height)
 	if err != nil {
-		// TODO: check if this error valid for us
-		// time.Sleep(c.cfg.BlockScanner.BlockHeightDiscoverBackoff)
-		// if rpcErr, ok := err.(*btcjson.RPCError); ok && rpcErr.Code == btcjson.ErrRPCInvalidParameter {
-		// 	// this means the tx had been broadcast to chain, it must be another signer finished quicker then us
-		// 	return types.TxIn{}, btypes.UnavailableBlock
-		// }
 		return types.TxIn{}, fmt.Errorf("fail to get block: %w", err)
 	}
 
@@ -547,6 +544,9 @@ func (c *Client) parseTxExtra(extra []byte) (map[byte][][]byte, error) {
 			ind += len
 		} else if extra[ind] == 0x01 {
 			// Pubkey - 32 byte key (fixed length)
+			if len(extra) - ind <= 32 {
+				return nil, fmt.Errorf("Tx pubKey has insufficient length!")
+			}
 			var ba = make([]byte, 32)
 			ba = extra[ind+1 : ind+33]
 			parsedTxExtra[0x01] = append(parsedTxExtra[0x01], ba)
@@ -568,6 +568,9 @@ func (c *Client) parseTxExtra(extra []byte) (map[byte][][]byte, error) {
 		} else if extra[ind] == 0x17 {
 			// Offshore data
 			var len = int(extra[ind+1])
+			if len(extra) - ind <= len {
+				return nil, fmt.Errorf("Offshore data has insufficient length!")
+			}
 			var ba = make([]byte, len)
 			ba = extra[ind+2 : ind+2+len]
 			parsedTxExtra[0x17] = append(parsedTxExtra[0x17], ba)
@@ -575,13 +578,17 @@ func (c *Client) parseTxExtra(extra []byte) (map[byte][][]byte, error) {
 		} else if extra[ind] == 0x18 {
 			// Thorchain memo data
 			var len = int(extra[ind+1])
+			if len(extra) - ind <= len {
+				return nil, fmt.Errorf("Thorchain memo data has insufficient length!")
+			}
 			var ba = make([]byte, len)
 			ba = extra[ind+2 : ind+2+len]
 			parsedTxExtra[0x18] = append(parsedTxExtra[0x18], ba)
 			ind += len
+		} else {
+			return nil, fmt.Errorf("fail to parse tx extra!")
 		}
 	}
 
-	var err error // TODO: error handling while parsing
 	return parsedTxExtra, err
 }

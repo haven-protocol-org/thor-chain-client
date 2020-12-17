@@ -1,6 +1,7 @@
 package haven
 
 import (
+	"encoding/hex"
 	"fmt"
 
 	moneroCrypto "github.com/haven-protocol-org/monero-go-utils/crypto"
@@ -61,4 +62,31 @@ func getHavenPrivateKey(key crypto.PrivKey) (secretViewKey, secretSpendKey *[32]
 	// genere secret view key
 	moneroCrypto.ViewFromSpend(secretViewKey, secretSpendKey)
 	return
+}
+
+func generateHavenWallet(privViewKey *[32]byte, privSpendKey *[32]byte, walletName string, password string) bool {
+	// generate pubKeys
+	var pubSpendKey [32]byte
+	moneroCrypto.PublicFromSecret(&pubSpendKey, privSpendKey)
+	var pubViewKey [32]byte
+	moneroCrypto.PublicFromSecret(&pubViewKey, privViewKey)
+	// generate address data
+	var addData []byte
+	addData = append(addData, pubSpendKey)
+	addData = append(addData, pubViewKey)
+
+	// generate address data
+	var addData []byte
+	addData = append(addData, spendP[:]...)
+	addData = append(addData, viewP[:]...)
+
+	// generate the walletAddr
+	// NOTE: tag is for mainnet
+	walletAddr := base58.EncodeAddr(0x05af4, addData)
+
+	return CreateWallet(walletName, walletAddr, hex.EncodeToString(spendS[:]), hex.EncodeToString(viewS[:]), password, false)
+}
+
+func loginToWallet(walletName string, password string) bool {
+	return OpenWallet(walletName, password)
 }

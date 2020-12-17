@@ -277,3 +277,60 @@ func GetPoolTxs() ([]string, error) {
 
 	return txs, nil
 }
+
+func CreateWallet(fileName string, address string, spendKey string, viewKey string, password string, autosave bool) bool {
+
+	// Connect to daemon RPC server
+	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:12345/json_rpc")
+	defer clientHTTP.Close()
+
+	req := map[string]interface{}{"filename": fileName, "address": address, "spendkey": spendKey, "viewkey": viewKey, "password": password, "autosave_current": autosave}
+
+	type Reply struct {
+		Address string
+		Info    string
+	}
+
+	var reply Reply
+	var err error
+
+	// Get Height
+	err = clientHTTP.Call("generate_from_keys", req, &reply)
+	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
+		fmt.Printf("Error(): %q\n", err)
+		return false
+	} else if err != nil {
+		rpcerr := jsonrpc2.ServerError(err)
+		fmt.Printf("Error(): code=%d msg=%q data=%v reply=%v\n", rpcerr.Code, rpcerr.Message, rpcerr.Data, reply)
+		return false
+	}
+
+	return true
+}
+
+ffunc OpenWallet(walletName string, password string) bool {
+	// Connect to daemon RPC server
+	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:12345/json_rpc")
+	defer clientHTTP.Close()
+
+	req := map[string]interface{}{"filename": walletName, "password": password}
+
+	type Reply struct {
+	}
+
+	var reply Reply
+	var err error
+
+	// Get Height
+	err = clientHTTP.Call("open_wallet", req, &reply)
+	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
+		fmt.Printf("Error(): %q\n", err)
+		return false
+	} else if err != nil {
+		rpcerr := jsonrpc2.ServerError(err)
+		fmt.Printf("Error(): code=%d msg=%q data=%v reply=%v\n", rpcerr.Code, rpcerr.Message, rpcerr.Data, reply)
+		return false
+	}
+
+	return true
+}
