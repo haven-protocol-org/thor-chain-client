@@ -10,12 +10,12 @@ import (
 
 // UnspentTransactionOutput struct
 type UnspentTransactionOutput struct {
-	TxID        chainhash.Hash `json:"tx_id"`
-	N           uint32         `json:"n"`
-	Value       float64        `json:"value"`
-	BlockHeight int64          `json:"block_height"`
-	VaultPubKey common.PubKey  `json:"vault_pub_key"`
-	Spent       bool           `json:"spent"`
+	TxID        string        `json:"tx_id"`
+	N           uint32        `json:"n"`
+	Value       float64       `json:"value"`
+	BlockHeight int64         `json:"block_height"`
+	VaultPubKey common.PubKey `json:"vault_pub_key"`
+	Spent       bool          `json:"spent"`
 }
 
 // NewUnspentTransactionOutput create a new instance of UnspentTransactionOutput
