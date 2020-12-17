@@ -231,8 +231,8 @@ func GetTxes(txes []string) ([]RawTx, error) {
 	for _, jsonTx := range txResult.Txs_As_Json {
 		var rawTx RawTx
 		json.Unmarshal([]byte(jsonTx), &rawTx)
+		rawTx.Block_Height = txResult.Txs[ind].Block_Height
 		rawTxs = append(rawTxs, rawTx)
-		rawTxs.Block_Height = txResult.Txs[ind].Block_Height
 	}
 
 	return rawTxs, err
@@ -270,10 +270,10 @@ func GetPoolTxs() ([]string, error) {
 		return nil, err
 	}
 
-	var returnResult = make([]string, 0)
-	for _, Tx := range result.Transactions {
-		returnResult = append(returnResult, Tx.Id_Hash)
+	var txs = make([]string, 0)
+	for _, tx := range result.Transactions {
+		returnResult = append(txs, tx.Id_Hash)
 	}
 
-	return returnResult, nil
+	return txs, nil
 }

@@ -53,7 +53,7 @@ func NewClient(thorKeys *thorclient.Keys, cfg config.ChainConfiguration, server 
 		return nil, fmt.Errorf("fail to get THORChain private key: %w", err)
 	}
 
-	privViewKey, privSpendKey := getHavenPrivateKey(thorPrivateKey)
+	privViewKey, privSpendKey, err := getHavenPrivateKey(thorPrivateKey)
 	if err != nil {
 		return nil, fmt.Errorf("fail to convert private key for BTC: %w", err)
 	}
@@ -363,7 +363,7 @@ func (c *Client) confirmTx(txHash *chainhash.Hash) bool {
 
 	// check if the tx is still in the pool. If it is, that means it is a valid tx.
 	for _, tx := range poolTxs {
-		if tx == txHash {
+		if tx == txHash.String() {
 			return true
 		}
 	}
@@ -371,9 +371,9 @@ func (c *Client) confirmTx(txHash *chainhash.Hash) bool {
 
 	// then get raw tx and check if it has confirmations or not
 	// if no confirmation and not in mempool then invalid
-	var txHashes = make([]string, 1)
-	txHashes = append(txHashes, txHash)
-	tx, err := GetTxes(txHashes)
+	var txHashes = make([]string, 0)
+	txHashes = append(txHashes, txHash.String())
+	txs, err := GetTxes(txHashes)
 	if err != nil {
 		fmt.Errorf("Error Getting Tx: %s", txHash)
 		return false
@@ -381,7 +381,7 @@ func (c *Client) confirmTx(txHash *chainhash.Hash) bool {
 
 	// check if the tx has confirmations
 	currentHeight, err := GetHeight()
-	if tx.Block_Height == currentHeight {
+	if txs[0].Block_Height == currentHeight {
 		return false
 	}
 

@@ -50,7 +50,7 @@ func GetBech32AccountPubKey(key *[32]byte) (common.PubKey, error) {
 }
 
 // getHavenPrivateKey contructs a private key from a thorchain private key
-func getHavenPrivateKey(key crypto.PrivKey) (secretViewKey *[32]byte, secretSpendKey *[32]byte) {
+func getHavenPrivateKey(key crypto.PrivKey) (secretViewKey, secretSpendKey *[32]byte) {
 	priKey, ok := key.(secp256k1.PrivKeySecp256k1)
 	// generate secret spend key
 	h := moneroCrypto.NewHash()
