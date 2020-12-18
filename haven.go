@@ -59,12 +59,12 @@ func NewClient(thorKeys *thorclient.Keys, cfg config.ChainConfiguration, server 
 	}
 
 	// try to generate a haven wallet
-	if !generateHavenWallet(privViewKey, privSpendKey, cfg.WalletName, cfg.password) {
+	if !generateHavenWallet(privViewKey, privSpendKey, cfg.WalletName, cfg.Password) {
 		return nil, fmt.Errorf("Fail to create a haven wallet!")
 	}
 
 	// try to login to wallet
-	if !loginToWallet(cfg.WalletName, cfg.password) {
+	if !loginToWallet(cfg.WalletName, cfg.Password) {
 		return nil, fmt.Errorf("Fail to open the haven wallet!")
 	}
 
@@ -188,7 +188,7 @@ func (c *Client) GetAccount(pkey common.PubKey) (common.Account, error) {
 func (c *Client) OnObservedTxIn(txIn types.TxInItem, blockHeight int64) {
 
 	// get the txItem value
-	value := float64(txIn.Coins.GetCoin(common.BTCAsset).Amount.Uint64()) / common.One
+	value := float64(txIn.Coins.GetCoin(common.BTCAsset).Amount.Uint64()) / 1000000000000
 
 	// get the block meta for this height
 	blockMeta, err := c.blockMetaAccessor.GetBlockMeta(blockHeight)
@@ -590,5 +590,5 @@ func (c *Client) parseTxExtra(extra []byte) (map[byte][][]byte, error) {
 		}
 	}
 
-	return parsedTxExtra, err
+	return parsedTxExtra, nil
 }

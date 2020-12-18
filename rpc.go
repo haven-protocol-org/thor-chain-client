@@ -165,7 +165,7 @@ func GetVersion() (string, error) {
 	return reply.Version, err
 }
 
-func GetBlock(height int) (Block, error) {
+func GetBlock(height int64) (Block, error) {
 
 	// Connect to daemon RPC server
 	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:27750/json_rpc")
@@ -272,7 +272,7 @@ func GetPoolTxs() ([]string, error) {
 
 	var txs = make([]string, 0)
 	for _, tx := range result.Transactions {
-		returnResult = append(txs, tx.Id_Hash)
+		txs = append(txs, tx.Id_Hash)
 	}
 
 	return txs, nil
@@ -308,7 +308,7 @@ func CreateWallet(fileName string, address string, spendKey string, viewKey stri
 	return true
 }
 
-ffunc OpenWallet(walletName string, password string) bool {
+func OpenWallet(walletName string, password string) bool {
 	// Connect to daemon RPC server
 	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:12345/json_rpc")
 	defer clientHTTP.Close()
