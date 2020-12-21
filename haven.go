@@ -171,7 +171,7 @@ func (c *Client) GetAccount(pkey common.PubKey) (common.Account, error) {
 			total += utxo.Value
 		}
 	}
-	total = total * 1000000000000
+	total = total * 1000000000000 // 12 zeros
 
 	// return a new Account with the total amount spendable.
 	//TODO: 0,0 in the beginng???
@@ -201,6 +201,7 @@ func (c *Client) OnObservedTxIn(txIn types.TxInItem, blockHeight int64) {
 	}
 
 	// create a new unspent transaction output and save to the block it belongs to.
+	// TODO: n is always zero??
 	utxo := NewUnspentTransactionOutput(txIn.Tx, 0, value, blockHeight, txIn.ObservedVaultPubKey)
 	blockMeta.AddUTXO(utxo)
 	if err := c.blockMetaAccessor.SaveBlockMeta(blockHeight, blockMeta); err != nil {
@@ -313,7 +314,7 @@ func (c *Client) reConfirmTx() error {
 	for _, blockMeta := range blockMetas {
 		var errataTxs []types.ErrataTx
 		for _, utxo := range blockMeta.UnspentTransactionOutputs {
-			txID := utxo.TxID.String()
+			txID := utxo.TxID
 			if c.confirmTx(&utxo.TxID) {
 				c.logger.Info().Msgf("block height: %d, tx: %s still exist", blockMeta.Height, txID)
 				continue
@@ -348,7 +349,7 @@ func (c *Client) reConfirmTx() error {
 }
 
 // confirmTx check a tx is valid on chain post reorg
-func (c *Client) confirmTx(txHash *chainhash.Hash) bool {
+func (c *Client) confirmTx(txHash string) bool {
 	
 	// first check if tx is in mempool, just signed it for example
 	// if no error it means its valid mempool tx and move on
@@ -360,7 +361,7 @@ func (c *Client) confirmTx(txHash *chainhash.Hash) bool {
 
 	// check if the tx is still in the pool. If it is, that means it is a valid tx.
 	for _, tx := range poolTxs {
-		if tx == txHash.String() {
+		if tx == txHash {
 			return true
 		}
 	}
@@ -378,11 +379,11 @@ func (c *Client) confirmTx(txHash *chainhash.Hash) bool {
 
 	// check if the tx has confirmations
 	currentHeight, err := GetHeight()
-	if txs[0].Block_Height == currentHeight {
-		return false
+	if currentHeight > txs[0].Block_Height {
+		return true
 	}
 
-	return true
+	return false
 }
 
 // extractTxs extracts txs from a block to type TxIn
@@ -441,6 +442,8 @@ func (c *Client) extractTxs(block Block) (types.TxIn, error) {
 
 		// get the output
 		output := c.getOutput(&tx, &txPubKey)
+
+		//TODO: Check if the output is empty and skip this tx if it is.
 
 		// construct txItems
 		txItems = append(txItems, types.TxInItem{

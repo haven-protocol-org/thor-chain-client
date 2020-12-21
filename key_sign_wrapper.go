@@ -70,21 +70,17 @@ func generateHavenWallet(privViewKey *[32]byte, privSpendKey *[32]byte, walletNa
 	moneroCrypto.PublicFromSecret(&pubSpendKey, privSpendKey)
 	var pubViewKey [32]byte
 	moneroCrypto.PublicFromSecret(&pubViewKey, privViewKey)
-	// generate address data
-	var addData []byte
-	addData = append(addData, pubSpendKey)
-	addData = append(addData, pubViewKey)
 
 	// generate address data
 	var addData []byte
-	addData = append(addData, spendP[:]...)
-	addData = append(addData, viewP[:]...)
+	addData = append(addData, pubSpendKey[:]...)
+	addData = append(addData, pubViewKey[:]...)
 
 	// generate the walletAddr
 	// NOTE: tag is for mainnet
 	walletAddr := base58.EncodeAddr(0x05af4, addData)
 
-	return CreateWallet(walletName, walletAddr, hex.EncodeToString(spendS[:]), hex.EncodeToString(viewS[:]), password, false)
+	return CreateWallet(walletName, walletAddr, hex.EncodeToString(privSpendKey[:]), hex.EncodeToString(privViewKey[:]), password, false)
 }
 
 func loginToWallet(walletName string, password string) bool {

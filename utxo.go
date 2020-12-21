@@ -3,8 +3,6 @@ package haven
 import (
 	"fmt"
 
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-
 	"gitlab.com/thorchain/thornode/common"
 )
 
@@ -19,7 +17,7 @@ type UnspentTransactionOutput struct {
 }
 
 // NewUnspentTransactionOutput create a new instance of UnspentTransactionOutput
-func NewUnspentTransactionOutput(txID chainhash.Hash, n uint32, value float64, blockHeight int64, vaultPubKey common.PubKey) UnspentTransactionOutput {
+func NewUnspentTransactionOutput(txID string, n uint32, value float64, blockHeight int64, vaultPubKey common.PubKey) UnspentTransactionOutput {
 	return UnspentTransactionOutput{
 		TxID:        txID,
 		N:           n,
@@ -32,5 +30,5 @@ func NewUnspentTransactionOutput(txID chainhash.Hash, n uint32, value float64, b
 
 // GetKey return a key
 func (t UnspentTransactionOutput) GetKey() string {
-	return fmt.Sprintf("%s:%d", t.TxID.String(), t.N)
+	return fmt.Sprintf("%s:%d", t.TxID, t.N)
 }
