@@ -3,7 +3,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,7 +10,6 @@ import (
 	"net/http"
 	"net/rpc"
 
-	"github.com/haven-protocol-org/monero-go-utils/crypto"
 	"github.com/powerman/rpc-codec/jsonrpc2"
 )
 
@@ -121,6 +119,15 @@ type RawTx struct {
 	Vout           []VoutEntry
 	Extra          []byte
 	Rct_Signatures RctSignatures
+}
+
+type CreatedTx struct {
+	Amount_List    []uint64
+	Fee_List       []uint64
+	Multisig_Txset string
+	Tx_Hash_List   []string
+	Tx_Key_List    []string
+	Unsigned_Txset string
 }
 
 func ParseTxExtra(extra []byte) (error, map[byte][][]byte) {
@@ -286,102 +293,76 @@ func h2d(key [32]byte) uint64 {
 	return val
 }
 
+func CreateTx(dsts *[]map[string]interface{}) {
+
+	// Connect to daemon RPC server
+	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:12345/json_rpc")
+	defer clientHTTP.Close()
+
+	req := map[string]interface{}{"destinations": dsts, "priority": 0, "ring_size": 12, "get_tx_keys": true}
+
+	var reply CreatedTx
+	var err error
+
+	err = clientHTTP.Call("transfer_split", req, &reply)
+	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
+		fmt.Printf("Error(): %q\n", err)
+		// return nil, err
+	} else if err != nil {
+		rpcerr := jsonrpc2.ServerError(err)
+		fmt.Printf("Error(): code=%d msg=%q data=%v reply=%v\n", rpcerr.Code, rpcerr.Message, rpcerr.Data, reply)
+		// return nil, err
+	}
+
+	fmt.Printf("Reply: %q\n", reply)
+
+	// return reply, nil
+}
+
+func OpenWallet(walletName string, password string) bool {
+	// Connect to daemon RPC server
+	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:12345/json_rpc")
+	defer clientHTTP.Close()
+
+	req := map[string]interface{}{"filename": walletName, "password": password}
+
+	type Reply struct {
+	}
+
+	var reply Reply
+	var err error
+
+	// Get Height
+	err = clientHTTP.Call("open_wallet", req, &reply)
+	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
+		fmt.Printf("Error(): %q\n", err)
+		return false
+	} else if err != nil {
+		rpcerr := jsonrpc2.ServerError(err)
+		fmt.Printf("Error(): code=%d msg=%q data=%v reply=%v\n", rpcerr.Code, rpcerr.Message, rpcerr.Data, reply)
+		return false
+	}
+
+	return true
+}
+
 func main() {
 
-	// get block
-	status, blk := GetBlock(5005)
-	if status != nil {
-		return
+	walletName := ""
+	password := ""
+
+	if !OpenWallet(walletName, password) {
+		fmt.Errorf("Fail to open the haven wallet!")
 	}
 
-	// get the tx data
-	status, rawTxes := GetTxes(blk.Tx_Hashes)
+	var dsMap = make(map[string]interface{})
+	var dsts = make([]map[string]interface{}, 1)
 
-	// decode viewKey
-	viewKeyRaw, _ := hex.DecodeString("67196f0bb28a661933e5d8bffe13d063b57be21323ce84e844c800878b5d9102")
-	var viewKey [32]byte
-	copy(viewKey[:], viewKeyRaw)
+	dsMap["amount"] = 10
+	dsMap["address"] = "hvtaQ6uCjVWhLBniot3JS2S2eyoyvLzVCD3BGkkoLfqoayPj6Ejtc747bga2tNRPWtPAtJCtW9bH31e2kpBWMMcN1JskKRAadb"
 
-	// decode spendKey
-	publicSpendKeyRaw, _ := hex.DecodeString("5d33ee523d3f304d2e1892f57bc7f96761cf892ef98fc1ddd3e4763bc0e6e13c")
-	var publicSpendKey [32]byte
-	copy(publicSpendKey[:], publicSpendKeyRaw)
+	dsts[0] = dsMap
 
-	for _, rawTx := range rawTxes {
+	CreateTx(&dsts)
 
-		// parse tx extra
-		var status, parsedTxExtra = ParseTxExtra(rawTx.Extra)
-		if status != nil {
-			fmt.Printf("Error: %q\n", status)
-		}
-
-		// get tx public key
-		var txPubKey [32]byte
-		copy(txPubKey[:], parsedTxExtra[1][0][0:32])
-
-		// generate the shared secret
-		sharedSecret, status := crypto.GenerateKeyDerivation(&txPubKey, &viewKey)
-		if status != nil {
-			fmt.Printf("Error Creating Shared Secret: %q\n", status)
-			continue
-		}
-
-		for ind, vout := range rawTx.Vout {
-			
-			var key [32]byte
-			if len(vout.Target.Key) != 0 {
-				var targetRaw, _ = hex.DecodeString(vout.Target.Key)
-				copy(key[:], targetRaw)
-			} else {
-				var targetRaw, _ = hex.DecodeString(vout.Target.Offshore)
-				copy(key[:], targetRaw)
-			}
-
-			derivedPublicSpendKey, status := crypto.SubSecretFromTarget((*sharedSecret)[:], uint64(ind), &key)
-			if status != nil {
-				fmt.Printf("Error Deriving a Public Spend Key: %q\n", status)
-				continue
-			}
-
-			found := false
-			if *derivedPublicSpendKey == publicSpendKey {
-				fmt.Printf("\t\tKEYS MATHCES! index = %d  \n", ind)
-				found :=true
-			}
-
-			if found {
-				// decode the tx amount
-				fmt.Printf("We are the receiver. Trying to decode the amount (index = %d)\n", ind)
-				scalar := crypto.DerivationToScalar(sharedSecret[:], uint64(ind))
-				ecdhInfo := crypto.EcdhDecode(rawTx.Rct_Signatures.EcdhInfo[ind], *scalar)
-
-				// check if the provided output commitments mathces
-				var C, Ctmp [32]byte
-				check := crypto.AddKeys2(&Ctmp, ecdhInfo.Mask, ecdhInfo.Amount, crypto.H)
-				if check {
-					if len(vout.Target.Key) != 0 {
-						Craw, _ := hex.DecodeString(rawTx.Rct_Signatures.OutPk[ind])
-						copy(C[:], Craw)
-					} else {
-						Craw, _ := hex.DecodeString(rawTx.Rct_Signatures.OutPk_Usd[ind])
-						copy(C[:], Craw)
-					}
-					if crypto.EqualKeys(C, Ctmp) {
-						// fmt.Printf("RCT outPk = %q\n", rawTx.Rct_Signatures.OutPk)
-						// fmt.Printf("RCT outpk_usd = %q\n", rawTx.Rct_Signatures.OutPk_Usd)
-						// fmt.Printf("C = %x, Ctmp = %x\n", C, Ctmp)
-						// fmt.Printf("Mask: %x \n  Amount: %d \n", ecdhInfo.Mask, crypto.H2d(ecdhInfo.Amount))
-					}
-				}
-
-			} else {
-				// ignore tx. We aren't reciver
-			}
-
-		}
-
-		fmt.Printf("--------\n")
-
-		// Decode the ECDHINFO blocks to get the amounts
-	}
 }
