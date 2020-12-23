@@ -9,7 +9,7 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 	tssp "gitlab.com/thorchain/tss/go-tss/tss"
-
+	stypes "gitlab.com/thorchain/thornode/bifrost/thorclient/types"
 	"gitlab.com/thorchain/thornode/bifrost/blockscanner"
 	"gitlab.com/thorchain/thornode/bifrost/config"
 	"gitlab.com/thorchain/thornode/bifrost/metrics"
@@ -533,6 +533,83 @@ func (c *Client) getOutput(tx *RawTx, txPubKey *[32]byte) (TxVout, error) {
 		}
 	}
 
+}
+
+// SignTx is going to generate the outbound transaction, and also sign it
+func (c *Client) SignTx(tx stypes.TxOutItem, thorchainHeight int64) ([]byte, error) {
+	if !tx.Chain.Equals(common.XHVChain) {
+		return nil, errors.New("not XHV chain")
+	}
+
+	// TODO: check if the from address is the wallet we control
+	
+	// get the amount
+	var amount uint64
+	if len(tx.Coins) != 1 {
+		// ERROR ?? Do we support sending multiple asset types in a single transaction?
+	}
+	amount = tx.Coins[0].Amount
+	outputAsset = tx.Coins[0].Asset.Symbol
+	
+
+	if len(tx.Memo) != 0 {
+		// TODO: Add memo to tx extra
+	}
+
+	// create a dsts structure
+	var d = make(map[string]interface{})
+	d["amount"] = amount
+	d["address"] = tx.ToAddress.String()
+	var dsts = make([]map[string]interface{}, 1)
+	dsts[0] = d
+
+	// create and sing a transaction for this dsts
+	signedTx, err := CreateTx(dsts, outputAsset);
+	
+	// TODO: if we create multiple transactions we will have multiple Tx_Blobs. What should we do in that case. Concatanete them?
+	// Also don't forget we migth need to too hex.EncodeString() for each
+	return signedTx.Tx_Blob_List[0], nil
+}
+
+
+// BroadcastTx will broadcast the given payload to XHV chain
+func (c *Client) BroadcastTx(txOut stypes.TxOutItem, payload []byte) error {
+
+	// retrieve block meta
+	chainBlockHeight, err := c.GetHeight()
+	if err != nil {
+		return fmt.Errorf("fail to get chain block height: %w", err)
+	}
+	blockMeta, err := c.blockMetaAccessor.GetBlockMeta(chainBlockHeight)
+	if err != nil {
+		return fmt.Errorf("fail to get block meta: %w", err)
+	}
+	if blockMeta == nil {
+		blockMeta = NewBlockMeta("", chainBlockHeight, "")
+	}
+	err = c.updateBlockMeta(txOut, blockMeta, redeemTx)
+	if err != nil {
+		return fmt.Errorf("fail to update block meta: %s", err)
+	}
+
+	// broadcast tx
+	resp := SendRawTransaction(payload)
+
+	if resp.Status != "OK" {
+		// TODO: this is a fake reason text. Find the original and replace this.
+		if resp.Reason == "TX is alread in the chain" {
+			return nil
+		}
+
+		// revert block meta
+		err2 := c.revertBlockMeta(txOut, blockMeta, redeemTx)
+		if err2 != nil {
+			c.logger.Err(err2).Msg("fail to revert block meta")
+		}
+		return fmt.Errorf("fail to broadcast transaction to chain: %s", resp.Reason)
+	}
+
+	return nil
 }
 
 func (c *Client) parseTxExtra(extra []byte) (map[byte][][]byte, error) {

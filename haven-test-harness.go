@@ -122,12 +122,14 @@ type RawTx struct {
 }
 
 type CreatedTx struct {
-	Amount_List    []uint64
-	Fee_List       []uint64
-	Multisig_Txset string
-	Tx_Hash_List   []string
-	Tx_Key_List    []string
-	Unsigned_Txset string
+	Amount_List      []uint64
+	Fee_List         []uint64
+	Multisig_Txset   string
+	Tx_Hash_List     []string
+	Tx_Key_List      []string
+	Unsigned_Txset   string
+	Tx_Blob_List     []string
+	Tx_Metadata_List []string
 }
 
 func ParseTxExtra(extra []byte) (error, map[byte][][]byte) {
@@ -283,40 +285,69 @@ func GetVersion() (error, string) {
 	return err, reply.Version
 }
 
-func h2d(key [32]byte) uint64 {
-	var val uint64 = 0
-	var j int = 0
-	for j = 7; j >= 0; j-- {
-		val *= 256
-		val += uint64(uint8(key[j]))
-	}
-	return val
-}
+func CreateTx(dsts []map[string]interface{}, asset string) (CreatedTx, error) {
 
-func CreateTx(dsts *[]map[string]interface{}) {
-
-	// Connect to daemon RPC server
+	// Connect to Wallet RPC server
 	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:12345/json_rpc")
 	defer clientHTTP.Close()
 
-	req := map[string]interface{}{"destinations": dsts, "priority": 0, "ring_size": 12, "get_tx_keys": true}
+	// create a request
+	req := map[string]interface{}{"destinations": dsts, "priority": 0, "ring_size": 12, "get_tx_keys": true, "get_tx_hex": true, "get_tx_metadata": true, "do_not_relay": true}
 
 	var reply CreatedTx
 	var err error
 
-	err = clientHTTP.Call("transfer_split", req, &reply)
+	// call the rpc method
+	if asset == "XHV" {
+		err = clientHTTP.Call("transfer_split", req, &reply)
+	} else {
+		err = clientHTTP.Call("offshore_transfer", req, &reply)
+	}
+
+	// check for errors
 	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
 		fmt.Printf("Error(): %q\n", err)
-		// return nil, err
+		return reply, err
 	} else if err != nil {
 		rpcerr := jsonrpc2.ServerError(err)
 		fmt.Printf("Error(): code=%d msg=%q data=%v reply=%v\n", rpcerr.Code, rpcerr.Message, rpcerr.Data, reply)
-		// return nil, err
+		return reply, err
 	}
 
-	fmt.Printf("Reply: %q\n", reply)
+	return reply, nil
+}
 
-	// return reply, nil
+func sendRawTx(txHash string) BroadcastTxResponse {
+
+	var reply BroadcastTxResponse
+
+	requestBody, err := json.Marshal(map[string]interface{}{"tx_as_hex": txHash, "do_not_relay": false})
+	if err != nil {
+		reply.Status = "Marshaling Request Error"
+		reply.Reason = fmt.Sprintf("%+v", err)
+	}
+
+	resp, err := http.Post("http://127.0.0.1:27750/sendrawtransaction", "application/json", bytes.NewBuffer(requestBody))
+	if err != nil {
+		reply.Status = "Http Error"
+		reply.Reason = fmt.Sprintf("%+v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		reply.Status = "Read Error"
+		reply.Reason = fmt.Sprintf("%+v", err)
+	}
+
+	// parse the returned resutl
+	err := json.Unmarshal(body, &reply)
+	if err != nil {
+		reply.Status = "Unmarshaling Response Error"
+		reply.Reason = fmt.Sprintf("%+v", err)
+	}
+
+	return reply
 }
 
 func OpenWallet(walletName string, password string) bool {
@@ -358,11 +389,11 @@ func main() {
 	var dsMap = make(map[string]interface{})
 	var dsts = make([]map[string]interface{}, 1)
 
-	dsMap["amount"] = 10
+	dsMap["amount"] = 15000000000000 // 15 haven
 	dsMap["address"] = "hvtaQ6uCjVWhLBniot3JS2S2eyoyvLzVCD3BGkkoLfqoayPj6Ejtc747bga2tNRPWtPAtJCtW9bH31e2kpBWMMcN1JskKRAadb"
 
 	dsts[0] = dsMap
+	resp, _ := CreateTx(dsts, "XHV")
 
-	CreateTx(&dsts)
-
+	sendRawTx(resp.Tx_Blob_List[0])
 }

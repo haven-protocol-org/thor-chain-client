@@ -121,6 +121,37 @@ type RawTx struct {
 	Block_Height   uint64
 }
 
+type CreatedTx struct {
+	Amount_List      []uint64
+	Fee_List         []uint64
+	Multisig_Txset   string
+	Tx_Hash_List     []string
+	Tx_Key_List      []string
+	Unsigned_Txset   string
+	Tx_Blob_List     []string
+	Tx_Metadata_List []string
+}
+
+type BroadcastTxResponse struct {
+	Credits             uint
+	Double_Spend        bool
+	Fee_Too_Low         bool
+	Invalid_Input       bool
+	Invalid_Output      bool
+	Low_Mixin           bool
+	Not_Relayed         bool
+	Overspend           bool
+	Reason              string
+	Sanity_Check_Failed bool
+	Status              string
+	Too_Big             bool
+	Too_Few_Outputs     bool
+	Top_Hash            string
+	Untrusted           bool
+}
+
+// TODO: Merge GetHeight and GetVersion functions. They are the same.
+
 // GetHeight gets the height of the haven blockchain
 func GetHeight() (uint64, error) {
 
@@ -134,13 +165,13 @@ func GetHeight() (uint64, error) {
 	// Get Height
 	err = clientHTTP.Call("get_info", nil, &reply)
 	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
-		fmt.Printf("Error(): %q\n", err)
+		return nil, fmt.Errorf("Failed to get chain Info: %+v\n", err)
 	} else if err != nil {
 		rpcerr := jsonrpc2.ServerError(err)
-		fmt.Printf("Error(): code=%d msg=%q data=%v reply=%v\n", rpcerr.Code, rpcerr.Message, rpcerr.Data, reply)
+		return nil, fmt.Errorf("Failed to get chain Info: %+v\n", rpcerr)
 	}
 
-	return reply.Height, err
+	return reply.Height, nil
 }
 
 // GetVersion gets the version of the running haven daemon
@@ -156,13 +187,13 @@ func GetVersion() (string, error) {
 	// Get Height
 	err = clientHTTP.Call("get_info", nil, &reply)
 	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
-		fmt.Printf("Err3(): %q\n", err)
+		return nil, fmt.Errorf("Failed to get chain Info: %+v\n", err)
 	} else if err != nil {
 		rpcerr := jsonrpc2.ServerError(err)
-		fmt.Printf("Err3(): code=%d msg=%q data=%v reply=%v\n", rpcerr.Code, rpcerr.Message, rpcerr.Data, reply)
+		return nil, fmt.Errorf("Failed to get chain Info: %+v\n", rpcerr)
 	}
 
-	return reply.Version, err
+	return reply.Version, nil
 }
 
 func GetBlock(height int64) (Block, error) {
@@ -179,12 +210,10 @@ func GetBlock(height int64) (Block, error) {
 	// Get Height
 	err = clientHTTP.Call("get_block", req, &reply)
 	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
-		fmt.Printf("Error(): %q\n", err)
-		return nil, err
+		return nil, fmt.Errorf("Failed to get block: %+v\n", err)
 	} else if err != nil {
 		rpcerr := jsonrpc2.ServerError(err)
-		fmt.Printf("Error(): code=%d msg=%q data=%v reply=%v\n", rpcerr.Code, rpcerr.Message, rpcerr.Data, reply)
-		return nil, err
+		return nil, fmt.Errorf("Failed to get block: %+v\n", rpcerr)
 	}
 
 	return reply, err
@@ -194,21 +223,18 @@ func GetTxes(txes []string) ([]RawTx, error) {
 
 	requestBody, err := json.Marshal(map[string]interface{}{"txs_hashes": txes, "decode_as_json": true})
 	if err != nil {
-		fmt.Printf("Marshaling Error: %q\n", err)
-		return nil, err
+		return nil, fmt.Errorf("GetTxes() Marshaling request Error: %+v\n", err)
 	}
 
 	resp, err := http.Post("http://127.0.0.1:27750/get_transactions", "application/json", bytes.NewBuffer(requestBody))
 	if err != nil {
-		fmt.Printf("Http Error: %q\n", err)
-		return nil, err
+		return nil, fmt.Errorf("GetTxes() Http Error: %+v\n", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Printf("Read Error: %q\n", err)
-		return nil, err
+		return nil, fmt.Errorf("GetTxes() Reading response Error: %+v\n", err)
 	}
 
 	type Tx struct {
@@ -225,12 +251,18 @@ func GetTxes(txes []string) ([]RawTx, error) {
 	var rawTxs []RawTx
 
 	// parse the returned resutl
-	json.Unmarshal(body, &txResult)
+	err := json.Unmarshal(body, &txResult)
+	if err != nil {
+		return nil, fmt.Errorf("GetTxes() Unmarshaling Response Error: %+v\n", err)
+	}
 
 	// parse each tx in the result and save
 	for _, jsonTx := range txResult.Txs_As_Json {
 		var rawTx RawTx
-		json.Unmarshal([]byte(jsonTx), &rawTx)
+		err := json.Unmarshal([]byte(jsonTx), &rawTx)
+		if err != nil {
+			return nil, fmt.Errorf("GetTxes() Unmarshaling Tx Error: %+v\n", err)
+		}
 		rawTx.Block_Height = txResult.Txs[ind].Block_Height
 		rawTxs = append(rawTxs, rawTx)
 	}
@@ -242,15 +274,13 @@ func GetPoolTxs() ([]string, error) {
 
 	resp, err := http.Get("http://127.0.0.1:27750/get_transaction_pool")
 	if err != nil {
-		fmt.Printf("Http Error: %q\n", err)
-		return nil, err
+		return nil, fmt.Errorf("GetPoolTxs() Marshaling request Error: %+v\n", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
-		fmt.Printf("Read Error: %q\n", err)
-		return nil, err
+		return nil, fmt.Errorf("GetPoolTxs() Reading response Error: %+v\n", err)
 	}
 
 	type Tx struct {
@@ -266,8 +296,7 @@ func GetPoolTxs() ([]string, error) {
 	// parse the returned resutl
 	err = json.Unmarshal(body, &result)
 	if err != nil {
-		fmt.Printf("There was an error decoding the json. err = %s", err)
-		return nil, err
+		return nil, fmt.Errorf("GetPoolTxs() Unmarshaling Response Error: %+v\n", err)
 	}
 
 	var txs = make([]string, 0)
@@ -280,7 +309,7 @@ func GetPoolTxs() ([]string, error) {
 
 func CreateWallet(fileName string, address string, spendKey string, viewKey string, password string, autosave bool) bool {
 
-	// Connect to daemon RPC server
+	// Connect to wallet RPC server
 	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:12345/json_rpc")
 	defer clientHTTP.Close()
 
@@ -294,14 +323,14 @@ func CreateWallet(fileName string, address string, spendKey string, viewKey stri
 	var reply Reply
 	var err error
 
-	// Get Height
+	// create wallet on rpc
 	err = clientHTTP.Call("generate_from_keys", req, &reply)
 	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
-		fmt.Printf("Error(): %q\n", err)
+		fmt.Errorf("Failed to generate wallet: %+v\n", err)
 		return false
 	} else if err != nil {
 		rpcerr := jsonrpc2.ServerError(err)
-		fmt.Printf("Error(): code=%d msg=%q data=%v reply=%v\n", rpcerr.Code, rpcerr.Message, rpcerr.Data, reply)
+		fmt.Errorf("Failed to generate wallet: %+v\n", rpcerr)
 		return false
 	}
 
@@ -309,28 +338,92 @@ func CreateWallet(fileName string, address string, spendKey string, viewKey stri
 }
 
 func OpenWallet(walletName string, password string) bool {
-	// Connect to daemon RPC server
+
+	// Connect to wallet RPC server
 	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:12345/json_rpc")
 	defer clientHTTP.Close()
 
+	// create a request
 	req := map[string]interface{}{"filename": walletName, "password": password}
 
-	type Reply struct {
-	}
+	type Reply struct{}
 
 	var reply Reply
 	var err error
 
-	// Get Height
+	// open wallet on rpc
 	err = clientHTTP.Call("open_wallet", req, &reply)
 	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
-		fmt.Printf("Error(): %q\n", err)
+		fmt.Errorf("Failed to open wallet: %+v\n", err)
 		return false
 	} else if err != nil {
 		rpcerr := jsonrpc2.ServerError(err)
-		fmt.Printf("Error(): code=%d msg=%q data=%v reply=%v\n", rpcerr.Code, rpcerr.Message, rpcerr.Data, reply)
+		fmt.Errorf("Failed to open wallet: %+v\n", rpcerr)
 		return false
 	}
 
 	return true
+}
+
+func CreateTx(dsts []map[string]interface{}, asset string) (CreatedTx, error) {
+
+	// Connect to Wallet RPC server
+	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:12345/json_rpc")
+	defer clientHTTP.Close()
+
+	// create a request
+	req := map[string]interface{}{"destinations": dsts, "priority": 0, "ring_size": 12, "get_tx_keys": true, "get_tx_hex": true, "get_tx_metadata": true, "do_not_relay": true}
+
+	var reply CreatedTx
+	var err error
+
+	// call the rpc method
+	if asset == "XHV" {
+		err = clientHTTP.Call("transfer_split", req, &reply)
+	} else {
+		err = clientHTTP.Call("offshore_transfer", req, &reply)
+	}
+
+	// check for errors
+	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
+		return nil, fmt.Errorf("Failed to create tx: %+v\n", err)
+	} else if err != nil {
+		rpcerr := jsonrpc2.ServerError(err)
+		return nil, fmt.Errorf("Failed to create tx: %+v\n", rpcerr)
+	}
+
+	return reply, nil
+}
+
+func SendRawTransaction(txHash string) BroadcastTxResponse {
+
+	var reply BroadcastTxResponse
+
+	requestBody, err := json.Marshal(map[string]interface{}{"tx_as_hex": txHash, "do_not_relay": false})
+	if err != nil {
+		reply.Status = "Marshaling Request Error"
+		reply.Reason = fmt.Sprintf("%+v", err)
+	}
+
+	resp, err := http.Post("http://127.0.0.1:27750/sendrawtransaction", "application/json", bytes.NewBuffer(requestBody))
+	if err != nil {
+		reply.Status = "Http Error"
+		reply.Reason = fmt.Sprintf("%+v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		reply.Status = "Read Error"
+		reply.Reason = fmt.Sprintf("%+v", err)
+	}
+
+	// parse the returned resutl
+	err := json.Unmarshal(body, &reply)
+	if err != nil {
+		reply.Status = "Unmarshaling Response Error"
+		reply.Reason = fmt.Sprintf("%+v", err)
+	}
+
+	return reply
 }

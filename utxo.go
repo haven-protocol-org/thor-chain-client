@@ -8,6 +8,7 @@ import (
 
 // UnspentTransactionOutput struct
 type UnspentTransactionOutput struct {
+	// TOOD: update this string to chainHash type
 	TxID        string        `json:"tx_id"`
 	N           uint32        `json:"n"`
 	Value       float64       `json:"value"`
