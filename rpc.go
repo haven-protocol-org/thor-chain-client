@@ -26,7 +26,7 @@ type GetInfoResult struct {
 	Difficulty_Top64            int64
 	Free_Space                  int64
 	Grey_Peerlist_Size          int
-	Height                      uint64
+	Height                      int64
 	Height_Without_Bootstrap    uint64
 	Incoming_Connections_Count  int
 	Mainnet                     bool
@@ -63,7 +63,7 @@ type BlockHeader struct {
 	Nonce         int64
 	Num_txes      int
 	Orphan_status bool
-	Prev_hash     string
+	Prev_Hash     string
 	Reward        int64
 	Timestamp     int64
 }
@@ -106,7 +106,7 @@ type RctSignatures struct {
 	TxnFee_Usd         int64
 	TxnOffshoreFee     int64
 	TxnOffshoreFee_Usd int64
-	EcdhInfo           []map[string][]byte
+	EcdhInfo           []map[string]string
 	OutPk              []string
 	OutPk_Usd          []string
 }
@@ -118,7 +118,7 @@ type RawTx struct {
 	Vout           []VoutEntry
 	Extra          []byte
 	Rct_Signatures RctSignatures
-	Block_Height   uint64
+	Block_Height   int64
 }
 
 type CreatedTx struct {
@@ -153,7 +153,7 @@ type BroadcastTxResponse struct {
 // TODO: Merge GetHeight and GetVersion functions. They are the same.
 
 // GetHeight gets the height of the haven blockchain
-func GetHeight() (uint64, error) {
+func GetHeight() (int64, error) {
 
 	// Connect to daemon RPC server
 	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:17750/json_rpc")
@@ -165,10 +165,10 @@ func GetHeight() (uint64, error) {
 	// Get Height
 	err = clientHTTP.Call("get_info", nil, &reply)
 	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
-		return nil, fmt.Errorf("Failed to get chain Info: %+v\n", err)
+		return 0, fmt.Errorf("Failed to get chain Info: %+v\n", err)
 	} else if err != nil {
 		rpcerr := jsonrpc2.ServerError(err)
-		return nil, fmt.Errorf("Failed to get chain Info: %+v\n", rpcerr)
+		return 0, fmt.Errorf("Failed to get chain Info: %+v\n", rpcerr)
 	}
 
 	return reply.Height, nil
@@ -187,10 +187,10 @@ func GetVersion() (string, error) {
 	// Get Height
 	err = clientHTTP.Call("get_info", nil, &reply)
 	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
-		return nil, fmt.Errorf("Failed to get chain Info: %+v\n", err)
+		return "", fmt.Errorf("Failed to get chain Info: %+v\n", err)
 	} else if err != nil {
 		rpcerr := jsonrpc2.ServerError(err)
-		return nil, fmt.Errorf("Failed to get chain Info: %+v\n", rpcerr)
+		return "", fmt.Errorf("Failed to get chain Info: %+v\n", rpcerr)
 	}
 
 	return reply.Version, nil
@@ -202,7 +202,7 @@ func GetBlock(height int64) (Block, error) {
 	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:27750/json_rpc")
 	defer clientHTTP.Close()
 
-	req := map[string]int{"height": height}
+	req := map[string]int64{"height": height}
 
 	var reply Block
 	var err error
@@ -210,10 +210,10 @@ func GetBlock(height int64) (Block, error) {
 	// Get Height
 	err = clientHTTP.Call("get_block", req, &reply)
 	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
-		return nil, fmt.Errorf("Failed to get block: %+v\n", err)
+		return reply, fmt.Errorf("Failed to get block: %+v\n", err)
 	} else if err != nil {
 		rpcerr := jsonrpc2.ServerError(err)
-		return nil, fmt.Errorf("Failed to get block: %+v\n", rpcerr)
+		return reply, fmt.Errorf("Failed to get block: %+v\n", rpcerr)
 	}
 
 	return reply, err
@@ -238,7 +238,7 @@ func GetTxes(txes []string) ([]RawTx, error) {
 	}
 
 	type Tx struct {
-		Block_Height uint64
+		Block_Height int64
 	}
 
 	type GetTxResult struct {
@@ -251,13 +251,13 @@ func GetTxes(txes []string) ([]RawTx, error) {
 	var rawTxs []RawTx
 
 	// parse the returned resutl
-	err := json.Unmarshal(body, &txResult)
+	err = json.Unmarshal(body, &txResult)
 	if err != nil {
 		return nil, fmt.Errorf("GetTxes() Unmarshaling Response Error: %+v\n", err)
 	}
 
 	// parse each tx in the result and save
-	for _, jsonTx := range txResult.Txs_As_Json {
+	for ind, jsonTx := range txResult.Txs_As_Json {
 		var rawTx RawTx
 		err := json.Unmarshal([]byte(jsonTx), &rawTx)
 		if err != nil {
@@ -373,14 +373,14 @@ func CreateTx(dsts []map[string]interface{}, asset string, memo string) (Created
 
 	// create a request
 	req := map[string]interface{}{
-		"destinations": dsts,
-		"memo": memo,
-		"priority": 0, 
-		"ring_size": 11, 
-		"get_tx_keys": true, 
-		"get_tx_hex": true,
-		"get_tx_metadata": true, 
-		"do_not_relay": true
+		"destinations":    dsts,
+		"memo":            memo,
+		"priority":        0,
+		"ring_size":       11,
+		"get_tx_keys":     true,
+		"get_tx_hex":      true,
+		"get_tx_metadata": true,
+		"do_not_relay":    true,
 	}
 
 	var reply CreatedTx
@@ -395,10 +395,10 @@ func CreateTx(dsts []map[string]interface{}, asset string, memo string) (Created
 
 	// check for errors
 	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
-		return nil, fmt.Errorf("Failed to create tx: %+v\n", err)
+		return reply, fmt.Errorf("Failed to create tx: %+v\n", err)
 	} else if err != nil {
 		rpcerr := jsonrpc2.ServerError(err)
-		return nil, fmt.Errorf("Failed to create tx: %+v\n", rpcerr)
+		return reply, fmt.Errorf("Failed to create tx: %+v\n", rpcerr)
 	}
 
 	return reply, nil
@@ -431,7 +431,7 @@ func SendRawTransaction(txHash string) BroadcastTxResponse {
 	}
 
 	// parse the returned resutl
-	err := json.Unmarshal(body, &reply)
+	err = json.Unmarshal(body, &reply)
 	if err != nil {
 		reply.Status = "Unmarshaling Response Error"
 		reply.Reason = fmt.Sprintf("%+v", err)
@@ -446,7 +446,7 @@ func GetWalletAddress() (string, error) {
 	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:12345/json_rpc")
 	defer clientHTTP.Close()
 
-	type Reply struct{
+	type Reply struct {
 		Address string
 	}
 
@@ -456,10 +456,10 @@ func GetWalletAddress() (string, error) {
 	// open wallet on rpc
 	err = clientHTTP.Call("get_address", nil, &reply)
 	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
-		return nil, fmt.Errorf("Failed to get wallet: %+v\n", err)
+		return "", fmt.Errorf("Failed to get wallet: %+v\n", err)
 	} else if err != nil {
 		rpcerr := jsonrpc2.ServerError(err)
-		return nil, fmt.Errorf("Failed to open wallet: %+v\n", rpcerr)
+		return "", fmt.Errorf("Failed to open wallet: %+v\n", rpcerr)
 	}
 
 	return reply.Address, nil

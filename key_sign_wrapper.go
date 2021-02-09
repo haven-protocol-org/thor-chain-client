@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"fmt"
 
+	"github.com/haven-protocol-org/monero-go-utils/base58"
 	moneroCrypto "github.com/haven-protocol-org/monero-go-utils/crypto"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
@@ -32,8 +33,8 @@ func NewKeySignWrapper(privViewKey *[32]byte, privSpendKey *[32]byte, bridge *th
 		return nil, fmt.Errorf("fail to get the pubkey: %w", err)
 	}
 	return &KeySignWrapper{
-		privViewKey:     privViewKey,
-		privSpendKey:    privSpendKey,
+		privViewKey:     *privViewKey,
+		privSpendKey:    *privSpendKey,
 		pubKey:          pubKey,
 		tssKeyManager:   tssKeyManager,
 		logger:          log.Logger.With().Str("module", "keysign_wrapper").Logger(),
@@ -46,13 +47,13 @@ func GetBech32AccountPubKey(key *[32]byte) (common.PubKey, error) {
 	var buf [32]byte
 	moneroCrypto.PublicFromSecret(&buf, key)
 	var pk secp256k1.PubKeySecp256k1
-	copy(pk[:], buf)
+	copy(pk[:], buf[:])
 	return common.NewPubKeyFromCrypto(pk)
 }
 
 // getHavenPrivateKey contructs a private key from a thorchain private key
 func getHavenPrivateKey(key crypto.PrivKey) (secretViewKey, secretSpendKey *[32]byte) {
-	priKey, ok := key.(secp256k1.PrivKeySecp256k1)
+	priKey, _ := key.(secp256k1.PrivKeySecp256k1)
 	// generate secret spend key
 	h := moneroCrypto.NewHash()
 	var keyHash [32]byte
@@ -83,7 +84,7 @@ func generateHavenWallet(privViewKey *[32]byte, privSpendKey *[32]byte, walletNa
 	if CreateWallet(walletName, walletAddr, hex.EncodeToString(privSpendKey[:]), hex.EncodeToString(privViewKey[:]), password, false) {
 		return pubSpendKey, pubViewKey, true
 	} else {
-		return nil, nil, false
+		return pubSpendKey, pubSpendKey, false
 	}
 }
 
@@ -93,10 +94,10 @@ func loginToWallet(walletName string, password string) bool {
 
 // GetSignable based on the given poolPubKey
 func (w *KeySignWrapper) GetSignable(poolPubKey common.PubKey) TssSignable {
-	s, err := NewTssSignable(poolPubKey, w.tssKeyManager, w.keySignPartyMgr)
-	if err != nil {
-		w.logger.Err(err).Msg("fail to create tss signable")
-		return nil
-	}
-	return s
+	// s, err := NewTssSignable(poolPubKey, w.tssKeyManager, w.keySignPartyMgr)
+	// if err != nil {
+	// 	w.logger.Err(err).Msg("fail to create tss signable")
+	// 	return nil
+	// }
+	return TssSignable{}
 }
