@@ -64,7 +64,7 @@ func getHavenPrivateKey(key crypto.PrivKey) (secretViewKey, secretSpendKey *[32]
 	return
 }
 
-func generateHavenWallet(privViewKey *[32]byte, privSpendKey *[32]byte, walletName string, password string) bool {
+func generateHavenWallet(privViewKey *[32]byte, privSpendKey *[32]byte, walletName string, password string) ([32]byte, [32]byte, bool) {
 	// generate pubKeys
 	var pubSpendKey [32]byte
 	moneroCrypto.PublicFromSecret(&pubSpendKey, privSpendKey)
@@ -80,9 +80,23 @@ func generateHavenWallet(privViewKey *[32]byte, privSpendKey *[32]byte, walletNa
 	// NOTE: tag is for mainnet
 	walletAddr := base58.EncodeAddr(0x05af4, addData)
 
-	return CreateWallet(walletName, walletAddr, hex.EncodeToString(privSpendKey[:]), hex.EncodeToString(privViewKey[:]), password, false)
+	if CreateWallet(walletName, walletAddr, hex.EncodeToString(privSpendKey[:]), hex.EncodeToString(privViewKey[:]), password, false) {
+		return pubSpendKey, pubViewKey, true
+	} else {
+		return nil, nil, false
+	}
 }
 
 func loginToWallet(walletName string, password string) bool {
 	return OpenWallet(walletName, password)
+}
+
+// GetSignable based on the given poolPubKey
+func (w *KeySignWrapper) GetSignable(poolPubKey common.PubKey) TssSignable {
+	s, err := NewTssSignable(poolPubKey, w.tssKeyManager, w.keySignPartyMgr)
+	if err != nil {
+		w.logger.Err(err).Msg("fail to create tss signable")
+		return nil
+	}
+	return s
 }

@@ -365,14 +365,23 @@ func OpenWallet(walletName string, password string) bool {
 	return true
 }
 
-func CreateTx(dsts []map[string]interface{}, asset string) (CreatedTx, error) {
+func CreateTx(dsts []map[string]interface{}, asset string, memo string) (CreatedTx, error) {
 
 	// Connect to Wallet RPC server
 	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:12345/json_rpc")
 	defer clientHTTP.Close()
 
 	// create a request
-	req := map[string]interface{}{"destinations": dsts, "priority": 0, "ring_size": 12, "get_tx_keys": true, "get_tx_hex": true, "get_tx_metadata": true, "do_not_relay": true}
+	req := map[string]interface{}{
+		"destinations": dsts,
+		"memo": memo,
+		"priority": 0, 
+		"ring_size": 11, 
+		"get_tx_keys": true, 
+		"get_tx_hex": true,
+		"get_tx_metadata": true, 
+		"do_not_relay": true
+	}
 
 	var reply CreatedTx
 	var err error
@@ -403,12 +412,14 @@ func SendRawTransaction(txHash string) BroadcastTxResponse {
 	if err != nil {
 		reply.Status = "Marshaling Request Error"
 		reply.Reason = fmt.Sprintf("%+v", err)
+		return reply
 	}
 
 	resp, err := http.Post("http://127.0.0.1:27750/sendrawtransaction", "application/json", bytes.NewBuffer(requestBody))
 	if err != nil {
 		reply.Status = "Http Error"
 		reply.Reason = fmt.Sprintf("%+v", err)
+		return reply
 	}
 	defer resp.Body.Close()
 
@@ -416,6 +427,7 @@ func SendRawTransaction(txHash string) BroadcastTxResponse {
 	if err != nil {
 		reply.Status = "Read Error"
 		reply.Reason = fmt.Sprintf("%+v", err)
+		return reply
 	}
 
 	// parse the returned resutl
@@ -423,7 +435,32 @@ func SendRawTransaction(txHash string) BroadcastTxResponse {
 	if err != nil {
 		reply.Status = "Unmarshaling Response Error"
 		reply.Reason = fmt.Sprintf("%+v", err)
+		return reply
 	}
 
 	return reply
+}
+
+func GetWalletAddress() (string, error) {
+	// Connect to wallet RPC server
+	clientHTTP := jsonrpc2.NewHTTPClient("http://127.0.0.1:12345/json_rpc")
+	defer clientHTTP.Close()
+
+	type Reply struct{
+		Address string
+	}
+
+	var reply Reply
+	var err error
+
+	// open wallet on rpc
+	err = clientHTTP.Call("get_address", nil, &reply)
+	if err == rpc.ErrShutdown || err == io.ErrUnexpectedEOF {
+		return nil, fmt.Errorf("Failed to get wallet: %+v\n", err)
+	} else if err != nil {
+		rpcerr := jsonrpc2.ServerError(err)
+		return nil, fmt.Errorf("Failed to open wallet: %+v\n", rpcerr)
+	}
+
+	return reply.Address, nil
 }
